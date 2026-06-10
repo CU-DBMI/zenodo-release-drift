@@ -11,7 +11,10 @@ from typing import Any
 import typer
 from tabulate import tabulate
 
-from zenodo_release_drift._version import __version__
+try:
+    from zenodo_release_drift._version import __version__
+except ImportError:
+    __version__ = "unknown"
 from zenodo_release_drift.main import (
     check_user,
     lint_repo,
