@@ -206,6 +206,9 @@ tempCodeRunnerFile.py
 # Ruff stuff:
 .ruff_cache/
 
+# setuptools-scm generated version file (do not track)
+src/zenodo_release_drift/_version.py
+
 # PyPI configuration file
 .pypirc
 
