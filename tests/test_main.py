@@ -6,6 +6,9 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+from github import GithubException
+
 from zenodo_release_drift.main import (
     CheckUserResult,
     DriftEngine,
@@ -49,8 +52,6 @@ class TestGitHubCollector:
         assert collector.get_releases() == ["v1.0.0"]
 
     def test_returns_empty_on_exception(self) -> None:
-        from github import GithubException
-
         gh = MagicMock()
         gh.get_repo.side_effect = GithubException(404, "Not Found", None)
         collector = GitHubCollector("owner", "repo", client=gh)
@@ -67,9 +68,6 @@ class TestGitHubUserCollector:
         assert collector.get_repos() == ["my-repo"]
 
     def test_raises_runtime_on_401(self) -> None:
-        import pytest
-        from github import GithubException
-
         gh = MagicMock()
         exc = GithubException(401, "Unauthorized", None)
         gh.get_user.return_value.get_repos.side_effect = exc
@@ -78,9 +76,6 @@ class TestGitHubUserCollector:
             collector.get_repos()
 
     def test_raises_runtime_on_403(self) -> None:
-        import pytest
-        from github import GithubException
-
         gh = MagicMock()
         exc = GithubException(403, "Forbidden", None)
         gh.get_user.return_value.get_repos.side_effect = exc

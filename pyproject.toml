@@ -15,6 +15,7 @@ classifiers = [
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
 ]
 dynamic = [ "version" ]
 dependencies = [
@@ -48,22 +49,21 @@ notebooks = [
 ]
 
 [tool.setuptools]
+packages.find.where = [ "src" ]
+packages.find.include = [ "zenodo_release_drift*" ]
 package-dir = { "" = "src" }
 include-package-data = true
 
-[tool.setuptools.packages.find]
-where = [ "src" ]
-include = [ "zenodo_release_drift*" ]
-
 [tool.setuptools_scm]
-root = "."
+version_file = "src/zenodo_release_drift/_version.py"
 version_scheme = "no-guess-dev"
 local_scheme = "no-local-version"
-version_file = "src/zenodo_release_drift/_version.py"
+root = "."
 
 [tool.ruff]
 target-version = "py311"
 line-length = 88
+exclude = [ "src/zenodo_release_drift/_version.py" ]
 fix = true
 lint.select = [
   # flake8-builtins
@@ -91,40 +91,39 @@ lint.select = [
 # Ignore `F401` (unused imports) for `__init__.py` file
 lint.per-file-ignores."__init__.py" = [ "F401" ]
 
-[tool.pytest.ini_options]
-pythonpath = [ "." ]
-addopts = [
+[tool.vulture]
+paths = [ "src/zenodo_release_drift", "tests" ]
+ignore_names = [ "_version*" ]
+min_confidence = 90
+
+[tool.pytest]
+ini_options.pythonpath = [ "." ]
+ini_options.addopts = [
   "--cov=zenodo_release_drift",
   "--cov-report=term-missing",
   "--cov-report=xml",
 ]
 
-[tool.coverage.run]
-branch = true
-source = [ "src/zenodo_release_drift" ]
-
-[tool.coverage.report]
-show_missing = true
-skip_covered = true
-
-[tool.poe.tasks]
-# tasks for development environments
-test.shell = """
-pytest
-"""
-lint.shell = """
-pre-commit run --all-files
-"""
-pipeline.shell = """
-pre-commit run --all-files && pytest
-"""
-jupyter.shell = """
-jupyter lab
-"""
+[tool.coverage]
+run.branch = true
+run.source = [ "src/zenodo_release_drift" ]
+report.show_missing = true
+report.skip_covered = true
 
 [tool.jupytext]
 formats = "ipynb,py:light"
 
-[tool.vulture]
-min_confidence = 90
-paths = [ "src/zenodo_release_drift", "tests" ]
+[tool.poe]
+# tasks for development environments
+tasks.test.shell = """
+pytest
+"""
+tasks.lint.shell = """
+pre-commit run --all-files
+"""
+tasks.pipeline.shell = """
+pre-commit run --all-files && pytest
+"""
+tasks.jupyter.shell = """
+jupyter lab
+"""

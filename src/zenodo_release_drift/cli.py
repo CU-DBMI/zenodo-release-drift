@@ -11,6 +11,7 @@ from typing import Any
 import typer
 from tabulate import tabulate
 
+from zenodo_release_drift._version import __version__
 from zenodo_release_drift.main import (
     check_user,
     lint_repo,
@@ -201,8 +202,6 @@ def check(
 @app.command()
 def version() -> None:
     """Show the version of zenodo-release-drift."""
-    from zenodo_release_drift._version import __version__
-
     typer.echo(f"zenodo-release-drift v{__version__}")
 
 

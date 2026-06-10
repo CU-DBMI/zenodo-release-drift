@@ -69,3 +69,4 @@ repos:
         entry: uv run --frozen --with ty ty check
         language: system
         files: ^(src|tests)/.*\.py$
+        exclude: ^src/zenodo_release_drift/_version\.py$

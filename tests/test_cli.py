@@ -4,6 +4,7 @@ Tests for the CLI module.
 
 from __future__ import annotations
 
+import json
 from unittest.mock import patch
 
 from typer.testing import CliRunner
@@ -108,8 +109,6 @@ class TestLintCommand:
         assert result.output.count("ZRD001") == 1
 
     def test_json_output(self) -> None:
-        import json
-
         with patch("zenodo_release_drift.cli.lint_repo") as mock_lint:
             mock_lint.return_value = [
                 {
@@ -175,8 +174,6 @@ class TestCheckCommand:
         assert "ZRD001" in result.output
 
     def test_json_output(self) -> None:
-        import json
-
         with patch("zenodo_release_drift.cli.check_user") as mock:
             mock.return_value = self._make_result({"d33bs/repo-a": []})
             result = runner.invoke(app, ["check", "d33bs", "--json"])
@@ -192,8 +189,6 @@ class TestCheckCommand:
         assert "No drift detected" in result.output
 
     def test_single_repo_json(self) -> None:
-        import json
-
         with patch("zenodo_release_drift.cli.lint_repo") as mock:
             mock.return_value = [
                 {
