@@ -211,6 +211,145 @@ class TestCheckCommand:
         assert "Repository" in result.output
 
 
+class TestFixCommand:
+    def _published(self, version: str = "1.1.0") -> dict:  # type: ignore[type-arg]
+        return {
+            "version": version,
+            "tag": f"v{version}",
+            "doi": f"10.5281/zenodo.{version}",
+            "concept_doi": "10.5281/zenodo.0",
+            "zenodo_url": "http://zenodo.org/record/1",
+            "status": "published",
+        }
+
+    def _error(self, version: str = "1.1.0", hint: str | None = None) -> dict:  # type: ignore[type-arg]
+        result = {
+            "version": version,
+            "tag": f"v{version}",
+            "status": "error",
+            "error": "HTTP 500: server error",
+        }
+        if hint:
+            result["hint"] = hint
+        return result
+
+    def test_missing_token_exits_1(self) -> None:
+        result = runner.invoke(app, ["fix", "owner/repo"], env={"ZENODO_TOKEN": ""})
+        assert result.exit_code == 1
+        assert "ZENODO_TOKEN" in result.output
+
+    def test_invalid_repo_format(self) -> None:
+        result = runner.invoke(app, ["fix", "noslash"], env={"ZENODO_TOKEN": "tok"})
+        assert result.exit_code == 1
+        assert "owner/repo" in result.output
+
+    def test_successful_upload_shows_doi(self) -> None:
+        with patch("zenodo_release_drift.cli.fix_repo") as mock:
+            mock.return_value = [self._published()]
+            result = runner.invoke(
+                app, ["fix", "owner/repo"], env={"ZENODO_TOKEN": "tok"}
+            )
+        assert result.exit_code == 0
+        assert "[OK]" in result.output
+        assert "10.5281/zenodo.1.1.0" in result.output
+
+    def test_no_missing_versions(self) -> None:
+        with patch("zenodo_release_drift.cli.fix_repo") as mock:
+            mock.return_value = []
+            result = runner.invoke(
+                app, ["fix", "owner/repo"], env={"ZENODO_TOKEN": "tok"}
+            )
+        assert result.exit_code == 0
+        assert "No missing" in result.output
+
+    def test_error_result_exits_1(self) -> None:
+        with patch("zenodo_release_drift.cli.fix_repo") as mock:
+            mock.return_value = [self._error()]
+            result = runner.invoke(
+                app, ["fix", "owner/repo"], env={"ZENODO_TOKEN": "tok"}
+            )
+        assert result.exit_code == 1
+        assert "[ERROR]" in result.output
+
+    def test_hint_printed_on_403(self) -> None:
+        with patch("zenodo_release_drift.cli.fix_repo") as mock:
+            mock.return_value = [self._error(hint="403 Forbidden: ownership issue")]
+            result = runner.invoke(
+                app, ["fix", "owner/repo"], env={"ZENODO_TOKEN": "tok"}
+            )
+        assert "Hint:" in result.output
+        assert "ownership" in result.output
+
+    def test_json_output(self) -> None:
+        with patch("zenodo_release_drift.cli.fix_repo") as mock:
+            mock.return_value = [self._published()]
+            result = runner.invoke(
+                app, ["fix", "owner/repo", "--json"], env={"ZENODO_TOKEN": "tok"}
+            )
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data[0]["status"] == "published"
+
+    def test_json_error_exits_1(self) -> None:
+        with patch("zenodo_release_drift.cli.fix_repo") as mock:
+            mock.return_value = [self._error()]
+            result = runner.invoke(
+                app, ["fix", "owner/repo", "--json"], env={"ZENODO_TOKEN": "tok"}
+            )
+        assert result.exit_code == 1
+
+    def test_version_flag_forwarded(self) -> None:
+        with patch("zenodo_release_drift.cli.fix_repo") as mock:
+            mock.return_value = [self._published()]
+            runner.invoke(
+                app,
+                ["fix", "owner/repo", "--version", "1.1.0"],
+                env={"ZENODO_TOKEN": "tok"},
+            )
+        _, kwargs = mock.call_args
+        assert kwargs["version"] == "1.1.0"
+
+    def test_sandbox_flag_forwarded(self) -> None:
+        with patch("zenodo_release_drift.cli.fix_repo") as mock:
+            mock.return_value = []
+            runner.invoke(
+                app, ["fix", "owner/repo", "--sandbox"], env={"ZENODO_TOKEN": "tok"}
+            )
+        _, kwargs = mock.call_args
+        assert kwargs["sandbox"] is True
+
+    def test_from_and_to_flags_forwarded(self) -> None:
+        with patch("zenodo_release_drift.cli.fix_repo") as mock:
+            mock.return_value = []
+            runner.invoke(
+                app,
+                ["fix", "owner/repo", "--from", "1.0.0", "--to", "1.4.0"],
+                env={"ZENODO_TOKEN": "tok"},
+            )
+        _, kwargs = mock.call_args
+        assert kwargs["from_version"] == "1.0.0"
+        assert kwargs["to_version"] == "1.4.0"
+
+    def test_range_shown_in_output(self) -> None:
+        with patch("zenodo_release_drift.cli.fix_repo") as mock:
+            mock.return_value = []
+            result = runner.invoke(
+                app,
+                ["fix", "owner/repo", "--from", "1.0.0", "--to", "1.4.0"],
+                env={"ZENODO_TOKEN": "tok"},
+            )
+        assert ">= 1.0.0" in result.output
+        assert "<= 1.4.0" in result.output
+
+    def test_note_printed_before_upload(self) -> None:
+        with patch("zenodo_release_drift.cli.fix_repo") as mock:
+            mock.return_value = []
+            result = runner.invoke(
+                app, ["fix", "owner/repo"], env={"ZENODO_TOKEN": "tok"}
+            )
+        assert "Note:" in result.output
+
+
 class TestVersionCommand:
     def test_version_output(self) -> None:
         result = runner.invoke(app, ["version"])

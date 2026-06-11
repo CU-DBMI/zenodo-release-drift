@@ -5,6 +5,7 @@ CLI for zenodo-release-drift.
 from __future__ import annotations
 
 import json
+import os
 import textwrap
 from typing import Any
 
@@ -17,6 +18,7 @@ except ImportError:
     __version__ = "unknown"
 from zenodo_release_drift.main import (
     check_user,
+    fix_repo,
     lint_repo,
     lint_repo_explain,
 )
@@ -200,6 +202,111 @@ def check(
         _check_single_repo(target, json_output, markdown_output, explain)
     else:
         _check_user_account(target, json_output)
+
+
+def _print_fix_results(results: list[dict[str, Any]]) -> None:
+    if not results:
+        typer.echo("No missing versions to upload.")
+        return
+    for result in results:
+        ver = result["version"]
+        if result["status"] == "published":
+            doi = result.get("doi") or "—"
+            concept = result.get("concept_doi")
+            url = result.get("zenodo_url") or ""
+            concept_part = f"  concept:{concept}" if concept else ""
+            typer.echo(f"  [OK] {ver}  doi:{doi}{concept_part}  {url}")
+        else:
+            typer.echo(f"  [ERROR] {ver}: {result.get('error', 'unknown error')}")
+            if hint := result.get("hint"):
+                typer.echo(f"\n  Hint: {hint}\n")
+
+
+@app.command()
+def fix(  # noqa: PLR0913
+    repo: str = typer.Argument(..., help="Repository in owner/repo format"),
+    version_filter: str | None = typer.Option(
+        None,
+        "--version",
+        "-v",
+        help="Upload only this specific version (default: all missing versions)",
+    ),
+    from_version: str | None = typer.Option(
+        None,
+        "--from",
+        help="Only upload versions at or above this semver (inclusive)",
+    ),
+    to_version: str | None = typer.Option(
+        None,
+        "--to",
+        help="Only upload versions at or below this semver (inclusive)",
+    ),
+    sandbox: bool = typer.Option(
+        False,
+        "--sandbox",
+        help="Use Zenodo sandbox instead of production",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Upload missing GitHub releases to Zenodo.
+
+    Reads ZENODO_TOKEN from the environment. Use --sandbox for testing
+    against sandbox.zenodo.org without publishing to production.
+
+    Pass --version to upload a single specific release; omit it to upload
+    every release currently missing from Zenodo. Use --from and --to to
+    restrict uploads to a semver range (both bounds are inclusive).
+    """
+    if "/" not in repo:
+        typer.echo("Error: Repository must be in the format 'owner/repo'", err=True)
+        raise typer.Exit(code=1)
+
+    token = os.environ.get("ZENODO_TOKEN")
+    if not token:
+        typer.echo(
+            "Error: ZENODO_TOKEN environment variable is not set.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    owner, repo_name = repo.split("/", 1)
+
+    if not json_output:
+        env_label = "sandbox" if sandbox else "production"
+        typer.echo(f"Uploading to Zenodo {env_label}: {repo}")
+        if version_filter:
+            typer.echo(f"  Version: {version_filter}")
+        else:
+            range_parts = []
+            if from_version:
+                range_parts.append(f">= {from_version}")
+            if to_version:
+                range_parts.append(f"<= {to_version}")
+            range_label = f" ({', '.join(range_parts)})" if range_parts else ""
+            typer.echo(f"  Scanning for all missing versions{range_label}…")
+        typer.echo(
+            "  Note: each archive is fetched from GitHub's tag endpoint at"
+            " the time of upload and reflects the current state of the tag."
+            " For most repositories this is identical to the original release."
+        )
+
+    results = fix_repo(
+        owner,
+        repo_name,
+        token=token,
+        version=version_filter,
+        from_version=from_version,
+        to_version=to_version,
+        sandbox=sandbox,
+    )
+
+    if json_output:
+        typer.echo(json.dumps(results, indent=2))
+    else:
+        _print_fix_results(results)
+
+    if any(r["status"] == "error" for r in results):
+        raise typer.Exit(code=1)
 
 
 @app.command()
