@@ -367,6 +367,83 @@ command name should be unambiguous.</p>
 </div>
 <p>Same options as <code class="docutils literal notranslate"><span class="pre">check</span></code>.</p>
 </section>
+<section id="fix">
+<h3><code class="docutils literal notranslate"><span class="pre">fix</span></code><a class="headerlink" href="#fix" title="Link to this heading">#</a></h3>
+<p>Upload releases that are missing from Zenodo back to the archive.</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">zenodo</span><span class="o">-</span><span class="n">release</span><span class="o">-</span><span class="n">drift</span> <span class="n">fix</span> <span class="p">[</span><span class="n">OPTIONS</span><span class="p">]</span> <span class="n">OWNER</span><span class="o">/</span><span class="n">REPO</span>
+</pre></div>
+</div>
+<p>Requires a <code class="docutils literal notranslate"><span class="pre">ZENODO_TOKEN</span></code> environment variable — a personal access token
+created at <a class="reference external" href="https://zenodo.org/account/settings/applications/">https://zenodo.org/account/settings/applications/</a>.</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Option</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">--version</span></code></p></td>
+<td><p>Upload only this specific version (default: all missing ones)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">--from</span></code></p></td>
+<td><p>Only upload versions at or above this semver (inclusive)</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">--to</span></code></p></td>
+<td><p>Only upload versions at or below this semver (inclusive)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">--sandbox</span></code></p></td>
+<td><p>Target <code class="docutils literal notranslate"><span class="pre">sandbox.zenodo.org</span></code> instead of production</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">--json</span></code></p></td>
+<td><p>Output results as JSON</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>How versions are grouped</strong>: if Zenodo already holds records for the repository, each upload is created as a new version under the same concept DOI so all versions remain linked.
+If no existing records are found, a new concept is created.</p>
+<p><strong>Note on uploaded source content</strong>: the archive uploaded for each version is fetched from GitHub’s tag archive endpoint at the moment <code class="docutils literal notranslate"><span class="pre">fix</span></code> runs, and reflects where the tag points at that time.
+For the vast majority of repositories this is identical to the original release — tags are not normally moved after publishing.
+If a tag has been amended since the original release was made, the archive will reflect the current state of the tag rather than its historical state; this is a property of how git tags work rather than a limitation of this tool.</p>
+<blockquote>
+<div><p><strong>Important — record ownership</strong></p>
+<p>The <code class="docutils literal notranslate"><span class="pre">ZENODO_TOKEN</span></code> you supply must belong to the same Zenodo account that
+owns the existing records. When the original records were created by the
+GitHub–Zenodo webhook they are owned by whichever Zenodo account connected
+the webhook — not necessarily yours. If your token belongs to a different
+account the <code class="docutils literal notranslate"><span class="pre">newversion</span></code> API call will return HTTP 403 and the upload will
+fail with a clear hint message.</p>
+<p><strong>To resolve a 403:</strong></p>
+<ol class="arabic simple">
+<li><p>Log in to Zenodo as the record owner.</p></li>
+<li><p>Open the existing record and go to <strong>Edit → Share</strong>.</p></li>
+<li><p>Grant your account the <strong>Curator</strong> role, <em>or</em> ask the Zenodo support
+team to transfer ownership.</p></li>
+<li><p>Re-run <code class="docutils literal notranslate"><span class="pre">fix</span></code> once access is granted.</p></li>
+</ol>
+</div></blockquote>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Upload every missing release</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">ZENODO_TOKEN</span><span class="o">=</span>your-token-here
+zenodo-release-drift<span class="w"> </span>fix<span class="w"> </span>owner/repo
+
+<span class="c1"># Upload a single specific release</span>
+zenodo-release-drift<span class="w"> </span>fix<span class="w"> </span>owner/repo<span class="w"> </span>--version<span class="w"> </span><span class="m">1</span>.2.3
+
+<span class="c1"># Upload all missing releases from 1.0.0 onwards</span>
+zenodo-release-drift<span class="w"> </span>fix<span class="w"> </span>owner/repo<span class="w"> </span>--from<span class="w"> </span><span class="m">1</span>.0.0
+
+<span class="c1"># Upload all missing releases up to and including 1.4.0</span>
+zenodo-release-drift<span class="w"> </span>fix<span class="w"> </span>owner/repo<span class="w"> </span>--to<span class="w"> </span><span class="m">1</span>.4.0
+
+<span class="c1"># Upload missing releases within a range</span>
+zenodo-release-drift<span class="w"> </span>fix<span class="w"> </span>owner/repo<span class="w"> </span>--from<span class="w"> </span><span class="m">1</span>.0.0<span class="w"> </span>--to<span class="w"> </span><span class="m">1</span>.4.0
+
+<span class="c1"># Test against the Zenodo sandbox before touching production</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">ZENODO_TOKEN</span><span class="o">=</span>your-sandbox-token-here
+zenodo-release-drift<span class="w"> </span>fix<span class="w"> </span>owner/repo<span class="w"> </span>--sandbox
+</pre></div>
+</div>
+</section>
 <section id="version">
 <h3><code class="docutils literal notranslate"><span class="pre">version</span></code><a class="headerlink" href="#version" title="Link to this heading">#</a></h3>
 <div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">zenodo</span><span class="o">-</span><span class="n">release</span><span class="o">-</span><span class="n">drift</span> <span class="n">version</span>
@@ -395,12 +472,30 @@ command name should be unambiguous.</p>
 </section>
 <section id="authentication">
 <h2>Authentication<a class="headerlink" href="#authentication" title="Link to this heading">#</a></h2>
+<section id="github-github-token">
+<h3>GitHub (<code class="docutils literal notranslate"><span class="pre">GITHUB_TOKEN</span></code>)<a class="headerlink" href="#github-github-token" title="Link to this heading">#</a></h3>
 <p>By default the tool makes unauthenticated GitHub API calls (60 requests/hour limit).
 Set <code class="docutils literal notranslate"><span class="pre">GITHUB_TOKEN</span></code> to raise this to 5,000 requests/hour:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">export</span><span class="w"> </span><span class="nv">GITHUB_TOKEN</span><span class="o">=</span>ghp_...
 zenodo-release-drift<span class="w"> </span>check<span class="w"> </span>my-org
 </pre></div>
 </div>
+</section>
+<section id="zenodo-zenodo-token">
+<h3>Zenodo (<code class="docutils literal notranslate"><span class="pre">ZENODO_TOKEN</span></code>)<a class="headerlink" href="#zenodo-zenodo-token" title="Link to this heading">#</a></h3>
+<p>The <code class="docutils literal notranslate"><span class="pre">fix</span></code> command requires a Zenodo personal access token with the
+<strong><code class="docutils literal notranslate"><span class="pre">deposit:write</span></code></strong> scope.</p>
+<ol class="arabic simple">
+<li><p>Log in to <a class="reference external" href="https://zenodo.org">https://zenodo.org</a> (or <a class="reference external" href="https://sandbox.zenodo.org">https://sandbox.zenodo.org</a> for testing).</p></li>
+<li><p>Go to <strong>Account → Applications → Personal access tokens</strong>.</p></li>
+<li><p>Create a token with the <code class="docutils literal notranslate"><span class="pre">deposit:write</span></code> scope.</p></li>
+<li><p>Export it before running <code class="docutils literal notranslate"><span class="pre">fix</span></code>:</p></li>
+</ol>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">export</span><span class="w"> </span><span class="nv">ZENODO_TOKEN</span><span class="o">=</span>your-token-here
+zenodo-release-drift<span class="w"> </span>fix<span class="w"> </span>owner/repo
+</pre></div>
+</div>
+</section>
 </section>
 <section id="pre-commit-hook">
 <h2>Pre-commit hook<a class="headerlink" href="#pre-commit-hook" title="Link to this heading">#</a></h2>
