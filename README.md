@@ -25,20 +25,20 @@ zenodo-release-drift check owner/repo
 Scan every repository owned by a GitHub user or org:
 
 ```bash
-zenodo-release-drift check cytomining
+zenodo-release-drift check example-org
 ```
 
 Example output:
 
 ```
-GitHub user or org: cytomining
+GitHub user or org: example-org
 28 repos found, 5 with Zenodo integration.
 
-Repository                Code    Description              Details
-------------------------  ------  -----------------------  -------------------------------------------
-cytomining/CytoTable      ZRD001  Release(s) not archived  15 release(s) not archived:
-                                                           1.2.0, 1.1.4, 1.0.1, ...
-cytomining/CytoTable      ZRD002  Zenodo out of date       Zenodo latest: 1.1.3  |  GitHub latest: 1.2.0
+Repository                  Code    Description              Details
+--------------------------  ------  -----------------------  -------------------------------------------
+example-org/example-repo    ZRD001  Release(s) not archived  15 release(s) not archived:
+                                                             1.2.0, 1.1.4, 1.0.1, ...
+example-org/example-repo    ZRD002  Zenodo out of date       Zenodo latest: 1.1.3  |  GitHub latest: 1.2.0
 ```
 
 Exit code is **1** when drift is found (single-repo mode), **0** when clean —
