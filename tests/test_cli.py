@@ -271,6 +271,46 @@ class TestFixCommand:
         assert result.exit_code == 1
         assert "[ERROR]" in result.output
 
+    def test_skipped_result_shown_and_exits_0(self) -> None:
+        skipped = {
+            "version": "1.1.0",
+            "tag": "v1.1.0",
+            "status": "skipped",
+            "reason": "Version 1.1.0 is already archived on Zenodo.",
+        }
+        with patch("zenodo_release_drift.cli.fix_repo") as mock:
+            mock.return_value = [skipped]
+            result = runner.invoke(
+                app,
+                ["fix", "owner/repo", "--version", "1.1.0"],
+                env={"ZENODO_TOKEN": "tok"},
+            )
+        assert result.exit_code == 0
+        assert "[SKIP]" in result.output
+        assert "already archived" in result.output
+
+    def test_force_flag_forwarded(self) -> None:
+        with patch("zenodo_release_drift.cli.fix_repo") as mock:
+            mock.return_value = []
+            runner.invoke(
+                app,
+                ["fix", "owner/repo", "--version", "1.1.0", "--force"],
+                env={"ZENODO_TOKEN": "tok"},
+            )
+        _, kwargs = mock.call_args
+        assert kwargs["force"] is True
+
+    def test_warning_printed_on_new_concept(self) -> None:
+        published = self._published()
+        published["warning"] = "standalone deposition created"
+        with patch("zenodo_release_drift.cli.fix_repo") as mock:
+            mock.return_value = [published]
+            result = runner.invoke(
+                app, ["fix", "owner/repo"], env={"ZENODO_TOKEN": "tok"}
+            )
+        assert "Warning:" in result.output
+        assert "standalone" in result.output
+
     def test_hint_printed_on_403(self) -> None:
         with patch("zenodo_release_drift.cli.fix_repo") as mock:
             mock.return_value = [self._error(hint="403 Forbidden: ownership issue")]
@@ -329,6 +369,27 @@ class TestFixCommand:
         _, kwargs = mock.call_args
         assert kwargs["from_version"] == "1.0.0"
         assert kwargs["to_version"] == "1.4.0"
+
+    def test_since_latest_flag_forwarded(self) -> None:
+        with patch("zenodo_release_drift.cli.fix_repo") as mock:
+            mock.return_value = []
+            runner.invoke(
+                app,
+                ["fix", "owner/repo", "--since-latest"],
+                env={"ZENODO_TOKEN": "tok"},
+            )
+        _, kwargs = mock.call_args
+        assert kwargs["since_latest"] is True
+
+    def test_since_latest_shown_in_output(self) -> None:
+        with patch("zenodo_release_drift.cli.fix_repo") as mock:
+            mock.return_value = []
+            result = runner.invoke(
+                app,
+                ["fix", "owner/repo", "--since-latest"],
+                env={"ZENODO_TOKEN": "tok"},
+            )
+        assert "newer than the latest on Zenodo" in result.output
 
     def test_range_shown_in_output(self) -> None:
         with patch("zenodo_release_drift.cli.fix_repo") as mock:

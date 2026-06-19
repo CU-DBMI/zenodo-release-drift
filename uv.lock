@@ -2288,6 +2288,7 @@ dependencies = [
     { name = "httpx" },
     { name = "packaging" },
     { name = "pygithub" },
+    { name = "pyyaml" },
     { name = "tabulate" },
     { name = "typer" },
 ]
@@ -2318,6 +2319,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.28" },
     { name = "packaging", specifier = ">=24" },
     { name = "pygithub", specifier = ">=2.5" },
+    { name = "pyyaml", specifier = ">=6" },
     { name = "tabulate", specifier = ">=0.9" },
     { name = "typer", specifier = ">=0.15.1" },
 ]

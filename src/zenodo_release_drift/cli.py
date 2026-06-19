@@ -7,9 +7,18 @@ from __future__ import annotations
 import json
 import os
 import textwrap
+from collections.abc import Callable
 from typing import Any
 
 import typer
+from rich.progress import (
+    BarColumn,
+    DownloadColumn,
+    Progress,
+    TextColumn,
+    TimeRemainingColumn,
+    TransferSpeedColumn,
+)
 from tabulate import tabulate
 
 try:
@@ -204,18 +213,86 @@ def check(
         _check_user_account(target, json_output)
 
 
-def _print_fix_results(results: list[dict[str, Any]]) -> None:
+def _build_progress(
+    ver_label: str,
+) -> tuple[Progress, Callable[[str, int, int], None]]:
+    """Return a rich Progress and a matching on_progress callback."""
+    bar = Progress(
+        TextColumn("[bold blue]{task.description}"),
+        BarColumn(),
+        DownloadColumn(),
+        TransferSpeedColumn(),
+        TimeRemainingColumn(),
+        transient=True,
+    )
+    task_ids: dict[str, Any] = {}
+
+    def on_progress(phase: str, done: int, total: int) -> None:
+        label = f"{ver_label} — {'downloading' if phase == 'download' else 'uploading'}"
+        if phase not in task_ids:
+            # When upload starts, mark the download task complete and remove it.
+            if phase == "upload" and "download" in task_ids:
+                dl_id = task_ids["download"]
+                dl_total = bar.tasks[dl_id].total or done
+                bar.update(dl_id, completed=dl_total)
+                bar.remove_task(dl_id)
+            task_ids[phase] = bar.add_task(label, total=total or None)
+        bar.update(task_ids[phase], completed=done, total=total or None)
+
+    return bar, on_progress
+
+
+def _print_fix_header(  # noqa: PLR0913
+    repo: str,
+    sandbox: bool,
+    version_filter: str | None,
+    from_version: str | None,
+    to_version: str | None,
+    concept_doi: str | None = None,
+    since_latest: bool = False,
+) -> None:
+    env_label = "sandbox" if sandbox else "production"
+    typer.echo(f"Uploading to Zenodo {env_label}: {repo}")
+    if concept_doi:
+        typer.echo(f"  Linking under concept DOI: {concept_doi}")
+    if version_filter:
+        typer.echo(f"  Version: {version_filter}")
+    elif since_latest:
+        typer.echo("  Scanning for missing versions newer than the latest on Zenodo…")
+    else:
+        range_parts = []
+        if from_version:
+            range_parts.append(f">= {from_version}")
+        if to_version:
+            range_parts.append(f"<= {to_version}")
+        range_label = f" ({', '.join(range_parts)})" if range_parts else ""
+        typer.echo(f"  Scanning for all missing versions{range_label}…")
+    typer.echo(
+        "  Note: each archive is fetched from GitHub's tag endpoint at"
+        " the time of upload and reflects the current state of the tag."
+        " For most repositories this is identical to the original release."
+    )
+
+
+def _print_fix_results(results: list[dict[str, Any]], verbose: bool = False) -> None:
     if not results:
         typer.echo("No missing versions to upload.")
         return
     for result in results:
         ver = result["version"]
+        if verbose:
+            for line in result.get("diag", []):
+                typer.echo(f"  [diag] {line}")
         if result["status"] == "published":
             doi = result.get("doi") or "—"
             concept = result.get("concept_doi")
             url = result.get("zenodo_url") or ""
             concept_part = f"  concept:{concept}" if concept else ""
             typer.echo(f"  [OK] {ver}  doi:{doi}{concept_part}  {url}")
+            if warning := result.get("warning"):
+                typer.echo(f"\n  Warning: {warning}\n")
+        elif result["status"] == "skipped":
+            typer.echo(f"  [SKIP] {ver}: {result.get('reason', 'already archived')}")
         else:
             typer.echo(f"  [ERROR] {ver}: {result.get('error', 'unknown error')}")
             if hint := result.get("hint"):
@@ -241,12 +318,48 @@ def fix(  # noqa: PLR0913
         "--to",
         help="Only upload versions at or below this semver (inclusive)",
     ),
+    since_latest: bool = typer.Option(
+        False,
+        "--since-latest",
+        help=(
+            "Only upload versions newer than the latest one already on Zenodo."
+            " Safest mode: appends to the version chain without reordering"
+            " existing records."
+        ),
+    ),
+    concept_doi: str | None = typer.Option(
+        None,
+        "--concept-doi",
+        help=(
+            "Zenodo concept DOI to link uploads against"
+            " (e.g. 10.5281/zenodo.20646876)."
+            " Overrides automatic record discovery."
+        ),
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help=(
+            "With --version, upload even if that version is already archived"
+            " on Zenodo (creates an additional new version)."
+        ),
+    ),
     sandbox: bool = typer.Option(
         False,
         "--sandbox",
         help="Use Zenodo sandbox instead of production",
     ),
     json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+    no_progress: bool = typer.Option(
+        False,
+        "--no-progress",
+        help="Disable the download/upload progress bar",
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        help="Print diagnostic details (record lookup, newversion errors)",
+    ),
 ) -> None:
     """Upload missing GitHub releases to Zenodo.
 
@@ -255,7 +368,9 @@ def fix(  # noqa: PLR0913
 
     Pass --version to upload a single specific release; omit it to upload
     every release currently missing from Zenodo. Use --from and --to to
-    restrict uploads to a semver range (both bounds are inclusive).
+    restrict uploads to a semver range (both bounds are inclusive), or
+    --since-latest to upload only releases newer than the latest version
+    already on Zenodo.
     """
     if "/" not in repo:
         typer.echo("Error: Repository must be in the format 'owner/repo'", err=True)
@@ -272,38 +387,46 @@ def fix(  # noqa: PLR0913
     owner, repo_name = repo.split("/", 1)
 
     if not json_output:
-        env_label = "sandbox" if sandbox else "production"
-        typer.echo(f"Uploading to Zenodo {env_label}: {repo}")
-        if version_filter:
-            typer.echo(f"  Version: {version_filter}")
-        else:
-            range_parts = []
-            if from_version:
-                range_parts.append(f">= {from_version}")
-            if to_version:
-                range_parts.append(f"<= {to_version}")
-            range_label = f" ({', '.join(range_parts)})" if range_parts else ""
-            typer.echo(f"  Scanning for all missing versions{range_label}…")
-        typer.echo(
-            "  Note: each archive is fetched from GitHub's tag endpoint at"
-            " the time of upload and reflects the current state of the tag."
-            " For most repositories this is identical to the original release."
+        _print_fix_header(
+            repo,
+            sandbox,
+            version_filter,
+            from_version,
+            to_version,
+            concept_doi,
+            since_latest,
         )
 
-    results = fix_repo(
-        owner,
-        repo_name,
-        token=token,
-        version=version_filter,
-        from_version=from_version,
-        to_version=to_version,
-        sandbox=sandbox,
-    )
+    show_progress = not json_output and not no_progress
+    on_progress: Callable[[str, int, int], None] | None = None
+    progress_bar: Progress | None = None
+
+    if show_progress:
+        progress_bar, on_progress = _build_progress(version_filter or "?")
+        progress_bar.start()
+
+    try:
+        results = fix_repo(
+            owner,
+            repo_name,
+            token=token,
+            version=version_filter,
+            from_version=from_version,
+            to_version=to_version,
+            since_latest=since_latest,
+            concept_doi=concept_doi,
+            force=force,
+            sandbox=sandbox,
+            on_progress=on_progress,
+        )
+    finally:
+        if progress_bar is not None:
+            progress_bar.stop()
 
     if json_output:
         typer.echo(json.dumps(results, indent=2))
     else:
-        _print_fix_results(results)
+        _print_fix_results(results, verbose=verbose)
 
     if any(r["status"] == "error" for r in results):
         raise typer.Exit(code=1)
