@@ -323,17 +323,50 @@
 <span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collections.abc</span><span class="w"> </span><span class="kn">import</span> <span class="n">Callable</span><span class="p">,</span> <span class="n">Generator</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="nn">httpx</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">yaml</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">github</span><span class="w"> </span><span class="kn">import</span> <span class="n">Auth</span><span class="p">,</span> <span class="n">Github</span><span class="p">,</span> <span class="n">GithubException</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">packaging.version</span><span class="w"> </span><span class="kn">import</span> <span class="n">InvalidVersion</span><span class="p">,</span> <span class="n">Version</span>
 
 <span class="n">_TIMEOUT</span> <span class="o">=</span> <span class="n">httpx</span><span class="o">.</span><span class="n">Timeout</span><span class="p">(</span><span class="mf">10.0</span><span class="p">)</span>
-<span class="n">_UPLOAD_TIMEOUT</span> <span class="o">=</span> <span class="n">httpx</span><span class="o">.</span><span class="n">Timeout</span><span class="p">(</span><span class="mf">120.0</span><span class="p">)</span>
+<span class="n">_UPLOAD_TIMEOUT</span> <span class="o">=</span> <span class="n">httpx</span><span class="o">.</span><span class="n">Timeout</span><span class="p">(</span><span class="mf">3600.0</span><span class="p">)</span>
 
 <span class="n">ZENODO_BASE_URL</span> <span class="o">=</span> <span class="s2">&quot;https://zenodo.org/api&quot;</span>
 <span class="n">ZENODO_SANDBOX_BASE_URL</span> <span class="o">=</span> <span class="s2">&quot;https://sandbox.zenodo.org/api&quot;</span>
+<span class="n">_DEPOSIT_PATH</span> <span class="o">=</span> <span class="s2">&quot;deposit/depositions&quot;</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_fetch_citation_cff</span><span class="p">(</span><span class="n">owner</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">repo</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Fetch and parse CITATION.cff from the default branch of a GitHub repo.&quot;&quot;&quot;</span>
+    <span class="n">url</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;https://raw.githubusercontent.com/</span><span class="si">{</span><span class="n">owner</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="n">repo</span><span class="si">}</span><span class="s2">/HEAD/CITATION.cff&quot;</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">resp</span> <span class="o">=</span> <span class="n">httpx</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">url</span><span class="p">,</span> <span class="n">timeout</span><span class="o">=</span><span class="n">_TIMEOUT</span><span class="p">,</span> <span class="n">follow_redirects</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">resp</span><span class="o">.</span><span class="n">status_code</span> <span class="o">!=</span> <span class="mi">200</span><span class="p">:</span>  <span class="c1"># noqa: PLR2004</span>
+            <span class="k">return</span> <span class="kc">None</span>
+        <span class="k">return</span> <span class="n">yaml</span><span class="o">.</span><span class="n">safe_load</span><span class="p">(</span><span class="n">resp</span><span class="o">.</span><span class="n">text</span><span class="p">)</span>  <span class="c1"># type: ignore[no-any-return]</span>
+    <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">None</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_creators_from_citation</span><span class="p">(</span><span class="n">cff</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Convert CITATION.cff authors list to Zenodo creators format.&quot;&quot;&quot;</span>
+    <span class="n">creators</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">author</span> <span class="ow">in</span> <span class="n">cff</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;authors&quot;</span><span class="p">,</span> <span class="p">[]):</span>
+        <span class="n">family</span> <span class="o">=</span> <span class="n">author</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;family-names&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
+        <span class="n">given</span> <span class="o">=</span> <span class="n">author</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;given-names&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
+        <span class="n">name</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">family</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">given</span><span class="si">}</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">strip</span><span class="p">(</span><span class="s2">&quot;, &quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="n">author</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;name&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">name</span><span class="p">:</span>
+            <span class="k">continue</span>
+        <span class="n">entry</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="n">name</span><span class="p">}</span>
+        <span class="k">if</span> <span class="n">orcid</span> <span class="o">:=</span> <span class="n">author</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;orcid&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">):</span>
+            <span class="n">entry</span><span class="p">[</span><span class="s2">&quot;orcid&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">orcid</span><span class="p">)</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">&quot;https://orcid.org/&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">affiliation</span> <span class="o">:=</span> <span class="n">author</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;affiliation&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">):</span>
+            <span class="n">entry</span><span class="p">[</span><span class="s2">&quot;affiliation&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">affiliation</span><span class="p">)</span>
+        <span class="n">creators</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">entry</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">creators</span>
 
 
 <span class="k">def</span><span class="w"> </span><span class="nf">_github_client</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">Github</span><span class="p">:</span>
@@ -380,6 +413,22 @@
             <span class="k">return</span> <span class="p">[</span><span class="n">r</span><span class="o">.</span><span class="n">tag_name</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">gh_repo</span><span class="o">.</span><span class="n">get_releases</span><span class="p">()]</span>
         <span class="k">except</span> <span class="n">GithubException</span><span class="p">:</span>
             <span class="k">return</span> <span class="p">[]</span></div>
+
+
+<div class="viewcode-block" id="GitHubCollector.get_release_dates">
+<a class="viewcode-back" href="../../python-api.html#zenodo_release_drift.main.GitHubCollector.get_release_dates">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">get_release_dates</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return a mapping of tag name → ISO date string (YYYY-MM-DD).&quot;&quot;&quot;</span>
+        <span class="n">gh</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_client</span> <span class="ow">or</span> <span class="n">_github_client</span><span class="p">()</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">gh_repo</span> <span class="o">=</span> <span class="n">gh</span><span class="o">.</span><span class="n">get_repo</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">owner</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">repo</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="k">return</span> <span class="p">{</span>
+                <span class="n">r</span><span class="o">.</span><span class="n">tag_name</span><span class="p">:</span> <span class="n">r</span><span class="o">.</span><span class="n">published_at</span><span class="o">.</span><span class="n">strftime</span><span class="p">(</span><span class="s2">&quot;%Y-%m-</span><span class="si">%d</span><span class="s2">&quot;</span><span class="p">)</span>
+                <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">gh_repo</span><span class="o">.</span><span class="n">get_releases</span><span class="p">()</span>
+                <span class="k">if</span> <span class="n">r</span><span class="o">.</span><span class="n">published_at</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+            <span class="p">}</span>
+        <span class="k">except</span> <span class="n">GithubException</span><span class="p">:</span>
+            <span class="k">return</span> <span class="p">{}</span></div>
 </div>
 
 
@@ -394,8 +443,12 @@
     <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span> <span class="n">owner</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">repo</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">client</span><span class="p">:</span> <span class="n">httpx</span><span class="o">.</span><span class="n">Client</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">owner</span> <span class="o">=</span> <span class="n">owner</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">repo</span> <span class="o">=</span> <span class="n">repo</span>
+        <span class="c1"># GitHub repo names are case-insensitive; Zenodo stores whatever casing</span>
+        <span class="c1"># was used at archive time. Normalising to lowercase here ensures the</span>
+        <span class="c1"># search query and URL comparison match regardless of how the caller</span>
+        <span class="c1"># supplied the owner/repo.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">owner</span> <span class="o">=</span> <span class="n">owner</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">repo</span> <span class="o">=</span> <span class="n">repo</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_client</span> <span class="o">=</span> <span class="n">client</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_cache</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
 
@@ -403,13 +456,20 @@
         <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;https://github.com/</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">owner</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">repo</span><span class="si">}</span><span class="s2">&quot;</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">_hit_belongs_to_repo</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">hit</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return True if the Zenodo record is linked to this GitHub repo.&quot;&quot;&quot;</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return True if the Zenodo record is linked to this GitHub repo.</span>
+
+<span class="sd">        Comparison is case-insensitive: ``_repo_url()`` is already lowercased,</span>
+<span class="sd">        and Zenodo stores whatever casing the repo used at archive time (e.g.</span>
+<span class="sd">        ``.../cytomining/CytoTable``), so the record values are lowercased here</span>
+<span class="sd">        before comparing.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
         <span class="n">meta</span> <span class="o">=</span> <span class="n">hit</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;metadata&quot;</span><span class="p">,</span> <span class="p">{})</span>
         <span class="n">repo_url</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_repo_url</span><span class="p">()</span>
-        <span class="k">if</span> <span class="p">(</span><span class="n">meta</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;custom&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="p">{})</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;code:codeRepository&quot;</span><span class="p">)</span> <span class="o">==</span> <span class="n">repo_url</span><span class="p">:</span>
+        <span class="n">code_repo</span> <span class="o">=</span> <span class="p">(</span><span class="n">meta</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;custom&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="p">{})</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;code:codeRepository&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="s2">&quot;&quot;</span>
+        <span class="k">if</span> <span class="n">code_repo</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="o">==</span> <span class="n">repo_url</span><span class="p">:</span>
             <span class="k">return</span> <span class="kc">True</span>
         <span class="k">for</span> <span class="n">ri</span> <span class="ow">in</span> <span class="n">meta</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;related_identifiers&quot;</span><span class="p">,</span> <span class="p">[]):</span>
-            <span class="k">if</span> <span class="n">repo_url</span> <span class="ow">in</span> <span class="n">ri</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;identifier&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">):</span>
+            <span class="k">if</span> <span class="n">repo_url</span> <span class="ow">in</span> <span class="p">(</span><span class="n">ri</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;identifier&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="s2">&quot;&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">lower</span><span class="p">():</span>
                 <span class="k">return</span> <span class="kc">True</span>
         <span class="k">return</span> <span class="kc">False</span>
 
@@ -703,63 +763,165 @@
             <span class="n">headers</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;Authorization&quot;</span><span class="p">:</span> <span class="sa">f</span><span class="s2">&quot;Bearer </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">token</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">},</span>
         <span class="p">)</span>
 
-    <span class="k">def</span><span class="w"> </span><span class="nf">_metadata</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">owner</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">repo</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">version</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]:</span>
-        <span class="k">return</span> <span class="p">{</span>
-            <span class="s2">&quot;title&quot;</span><span class="p">:</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">repo</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">version</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
-            <span class="s2">&quot;upload_type&quot;</span><span class="p">:</span> <span class="s2">&quot;software&quot;</span><span class="p">,</span>
-            <span class="s2">&quot;description&quot;</span><span class="p">:</span> <span class="p">(</span>
-                <span class="sa">f</span><span class="s2">&quot;Source code archive for </span><span class="si">{</span><span class="n">owner</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="n">repo</span><span class="si">}</span><span class="s2"> release </span><span class="si">{</span><span class="n">version</span><span class="si">}</span><span class="s2">.&quot;</span>
-            <span class="p">),</span>
-            <span class="s2">&quot;version&quot;</span><span class="p">:</span> <span class="n">version</span><span class="p">,</span>
-            <span class="s2">&quot;related_identifiers&quot;</span><span class="p">:</span> <span class="p">[</span>
-                <span class="p">{</span>
-                    <span class="s2">&quot;relation&quot;</span><span class="p">:</span> <span class="s2">&quot;isSupplementTo&quot;</span><span class="p">,</span>
-                    <span class="s2">&quot;identifier&quot;</span><span class="p">:</span> <span class="sa">f</span><span class="s2">&quot;https://github.com/</span><span class="si">{</span><span class="n">owner</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="n">repo</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
-                    <span class="s2">&quot;resource_type&quot;</span><span class="p">:</span> <span class="s2">&quot;software&quot;</span><span class="p">,</span>
-                    <span class="s2">&quot;scheme&quot;</span><span class="p">:</span> <span class="s2">&quot;url&quot;</span><span class="p">,</span>
-                <span class="p">}</span>
-            <span class="p">],</span>
-        <span class="p">}</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">_find_latest_record_id</span><span class="p">(</span>
-        <span class="bp">self</span><span class="p">,</span> <span class="n">client</span><span class="p">:</span> <span class="n">httpx</span><span class="o">.</span><span class="n">Client</span><span class="p">,</span> <span class="n">owner</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">repo</span><span class="p">:</span> <span class="nb">str</span>
-    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return the Zenodo record ID for the latest published version, or None.&quot;&quot;&quot;</span>
-        <span class="n">params</span> <span class="o">=</span> <span class="p">{</span>
-            <span class="s2">&quot;q&quot;</span><span class="p">:</span> <span class="sa">f</span><span class="s2">&quot;related.identifier:github.com/</span><span class="si">{</span><span class="n">owner</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="n">repo</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
-            <span class="s2">&quot;sort&quot;</span><span class="p">:</span> <span class="s2">&quot;mostrecent&quot;</span><span class="p">,</span>
-            <span class="s2">&quot;size&quot;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span>
-        <span class="p">}</span>
-        <span class="n">resp</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">base_url</span><span class="si">}</span><span class="s2">/records&quot;</span><span class="p">,</span> <span class="n">params</span><span class="o">=</span><span class="n">params</span><span class="p">,</span> <span class="n">timeout</span><span class="o">=</span><span class="n">_TIMEOUT</span><span class="p">)</span>
-        <span class="k">if</span> <span class="n">resp</span><span class="o">.</span><span class="n">status_code</span> <span class="o">!=</span> <span class="mi">200</span><span class="p">:</span>  <span class="c1"># noqa: PLR2004</span>
-            <span class="k">return</span> <span class="kc">None</span>
-        <span class="n">hits</span> <span class="o">=</span> <span class="n">resp</span><span class="o">.</span><span class="n">json</span><span class="p">()</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;hits&quot;</span><span class="p">,</span> <span class="p">{})</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;hits&quot;</span><span class="p">,</span> <span class="p">[])</span>
-        <span class="k">if</span> <span class="ow">not</span> <span class="n">hits</span><span class="p">:</span>
-            <span class="k">return</span> <span class="kc">None</span>
-        <span class="k">return</span> <span class="n">hits</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;id&quot;</span><span class="p">)</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">_new_deposition</span><span class="p">(</span>
-        <span class="bp">self</span><span class="p">,</span> <span class="n">client</span><span class="p">:</span> <span class="n">httpx</span><span class="o">.</span><span class="n">Client</span><span class="p">,</span> <span class="n">owner</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">repo</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">version</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_base_metadata</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">owner</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">repo</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">version</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">cff</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">publication_date</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]:</span>
+        <span class="n">title</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">repo</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">version</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="n">description</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;Source code archive for </span><span class="si">{</span><span class="n">owner</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="n">repo</span><span class="si">}</span><span class="s2"> release </span><span class="si">{</span><span class="n">version</span><span class="si">}</span><span class="s2">.&quot;</span>
+        <span class="k">if</span> <span class="n">cff</span><span class="p">:</span>
+            <span class="n">cff_title</span> <span class="o">=</span> <span class="n">cff</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;title&quot;</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">cff_title</span><span class="p">:</span>
+                <span class="n">title</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">cff_title</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">version</span><span class="si">}</span><span class="s2">&quot;</span>
+            <span class="n">cff_abstract</span> <span class="o">=</span> <span class="n">cff</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;abstract&quot;</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">cff_abstract</span><span class="p">:</span>
+                <span class="n">description</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">cff_abstract</span><span class="p">)</span>
+        <span class="n">meta</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s2">&quot;title&quot;</span><span class="p">:</span> <span class="n">title</span><span class="p">,</span>
+            <span class="s2">&quot;upload_type&quot;</span><span class="p">:</span> <span class="s2">&quot;software&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;description&quot;</span><span class="p">:</span> <span class="n">description</span><span class="p">,</span>
+            <span class="s2">&quot;version&quot;</span><span class="p">:</span> <span class="n">version</span><span class="p">,</span>
+        <span class="p">}</span>
+        <span class="k">if</span> <span class="n">publication_date</span><span class="p">:</span>
+            <span class="n">meta</span><span class="p">[</span><span class="s2">&quot;publication_date&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">publication_date</span>
+        <span class="n">meta</span><span class="p">[</span><span class="s2">&quot;related_identifiers&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span>
+            <span class="p">{</span>
+                <span class="s2">&quot;relation&quot;</span><span class="p">:</span> <span class="s2">&quot;isSupplementTo&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;identifier&quot;</span><span class="p">:</span> <span class="sa">f</span><span class="s2">&quot;https://github.com/</span><span class="si">{</span><span class="n">owner</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="n">repo</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;resource_type&quot;</span><span class="p">:</span> <span class="s2">&quot;software&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;scheme&quot;</span><span class="p">:</span> <span class="s2">&quot;url&quot;</span><span class="p">,</span>
+            <span class="p">}</span>
+        <span class="p">]</span>
+        <span class="k">if</span> <span class="n">cff</span><span class="p">:</span>
+            <span class="n">creators</span> <span class="o">=</span> <span class="n">_creators_from_citation</span><span class="p">(</span><span class="n">cff</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">creators</span><span class="p">:</span>
+                <span class="n">meta</span><span class="p">[</span><span class="s2">&quot;creators&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">creators</span>
+            <span class="k">if</span> <span class="n">message</span> <span class="o">:=</span> <span class="n">cff</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;message&quot;</span><span class="p">):</span>
+                <span class="n">meta</span><span class="p">[</span><span class="s2">&quot;notes&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">message</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">keywords</span> <span class="o">:=</span> <span class="n">cff</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;keywords&quot;</span><span class="p">):</span>
+                <span class="n">meta</span><span class="p">[</span><span class="s2">&quot;keywords&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span><span class="nb">str</span><span class="p">(</span><span class="n">k</span><span class="p">)</span> <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">keywords</span><span class="p">]</span>
+            <span class="k">if</span> <span class="n">license_id</span> <span class="o">:=</span> <span class="n">cff</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;license&quot;</span><span class="p">):</span>
+                <span class="n">meta</span><span class="p">[</span><span class="s2">&quot;license&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">license_id</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">meta</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_new_deposition_metadata</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">owner</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">repo</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">version</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">cff</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">publication_date</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]:</span>
+        <span class="n">meta</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_base_metadata</span><span class="p">(</span><span class="n">owner</span><span class="p">,</span> <span class="n">repo</span><span class="p">,</span> <span class="n">version</span><span class="p">,</span> <span class="n">cff</span><span class="p">,</span> <span class="n">publication_date</span><span class="p">)</span>
+        <span class="k">if</span> <span class="s2">&quot;creators&quot;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">meta</span><span class="p">:</span>
+            <span class="n">meta</span><span class="p">[</span><span class="s2">&quot;creators&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="p">[{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="n">owner</span><span class="p">}]</span>
+        <span class="k">return</span> <span class="n">meta</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_find_records_by_concept_doi</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">client</span><span class="p">:</span> <span class="n">httpx</span><span class="o">.</span><span class="n">Client</span><span class="p">,</span>
+        <span class="n">concept_doi</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">str</span><span class="p">]]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return the record ID derived from *concept_doi* as the sole candidate.</span>
+
+<span class="sd">        Zenodo concept DOIs have the form ``10.5281/zenodo.{id}``.  The numeric</span>
+<span class="sd">        ID at the end is the concept record ID; passing it to the ``newversion``</span>
+<span class="sd">        action creates a new draft under that concept without any search round-trip.</span>
+<span class="sd">        The source label is ``&quot;concept-doi&quot;`` for diagnostics.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">record_id</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">concept_doi</span><span class="o">.</span><span class="n">rsplit</span><span class="p">(</span><span class="s2">&quot;.&quot;</span><span class="p">,</span> <span class="mi">1</span><span class="p">)[</span><span class="o">-</span><span class="mi">1</span><span class="p">])</span>
+        <span class="k">except</span> <span class="ne">ValueError</span><span class="p">:</span>
+            <span class="k">return</span> <span class="p">[]</span>
+        <span class="k">return</span> <span class="p">[(</span><span class="n">record_id</span><span class="p">,</span> <span class="s2">&quot;concept-doi&quot;</span><span class="p">)]</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_find_candidate_record_ids</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">client</span><span class="p">:</span> <span class="n">httpx</span><span class="o">.</span><span class="n">Client</span><span class="p">,</span> <span class="n">owner</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">repo</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">str</span><span class="p">]]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return candidate (id, source) pairs to try for newversion.</span>
+
+<span class="sd">        Returns up to 10 candidates in preference order:</span>
+<span class="sd">        - Public records sorted oldest-first: original webhook-created records</span>
+<span class="sd">          have long-registered DOIs and are the right target for newversion.</span>
+<span class="sd">        - Authenticated depositions sorted most-recent: the user&#39;s own records,</span>
+<span class="sd">          listed after the public ones so recently-created standalones (whose</span>
+<span class="sd">          DOIs may not yet be registered) are tried last.</span>
+
+<span class="sd">        The same numeric ID is valid for both the public records and deposit</span>
+<span class="sd">        APIs; any of them can serve as the parent for a newversion call when</span>
+<span class="sd">        the caller has edit/curator access to the record.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">q</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;related.identifier:github.com/</span><span class="si">{</span><span class="n">owner</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="n">repo</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="n">candidates</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">str</span><span class="p">]]</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="n">seen</span><span class="p">:</span> <span class="nb">set</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+
+        <span class="c1"># Oldest published records first — original webhook records are here</span>
+        <span class="c1"># and their DOIs are long-registered, making newversion reliable.</span>
+        <span class="n">pub_resp</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">get</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">base_url</span><span class="si">}</span><span class="s2">/records&quot;</span><span class="p">,</span>
+            <span class="n">params</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;q&quot;</span><span class="p">:</span> <span class="n">q</span><span class="p">,</span> <span class="s2">&quot;sort&quot;</span><span class="p">:</span> <span class="s2">&quot;-mostrecent&quot;</span><span class="p">,</span> <span class="s2">&quot;size&quot;</span><span class="p">:</span> <span class="mi">5</span><span class="p">},</span>
+            <span class="n">timeout</span><span class="o">=</span><span class="n">_TIMEOUT</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="k">if</span> <span class="n">pub_resp</span><span class="o">.</span><span class="n">status_code</span> <span class="o">==</span> <span class="mi">200</span><span class="p">:</span>  <span class="c1"># noqa: PLR2004</span>
+            <span class="k">for</span> <span class="n">hit</span> <span class="ow">in</span> <span class="n">pub_resp</span><span class="o">.</span><span class="n">json</span><span class="p">()</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;hits&quot;</span><span class="p">,</span> <span class="p">{})</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;hits&quot;</span><span class="p">,</span> <span class="p">[]):</span>
+                <span class="n">rid</span> <span class="o">=</span> <span class="n">hit</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;id&quot;</span><span class="p">)</span>
+                <span class="k">if</span> <span class="n">rid</span> <span class="ow">and</span> <span class="n">rid</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">seen</span><span class="p">:</span>
+                    <span class="n">candidates</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">rid</span><span class="p">,</span> <span class="s2">&quot;public-oldest&quot;</span><span class="p">))</span>
+                    <span class="n">seen</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">rid</span><span class="p">)</span>
+
+        <span class="c1"># Most-recent depositions owned by the authenticated user (may include</span>
+        <span class="c1"># recently-created standalones whose DOIs are not yet registered).</span>
+        <span class="n">dep_resp</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">get</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">base_url</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="n">_DEPOSIT_PATH</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
+            <span class="n">params</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;q&quot;</span><span class="p">:</span> <span class="n">q</span><span class="p">,</span> <span class="s2">&quot;sort&quot;</span><span class="p">:</span> <span class="s2">&quot;mostrecent&quot;</span><span class="p">,</span> <span class="s2">&quot;size&quot;</span><span class="p">:</span> <span class="mi">5</span><span class="p">,</span> <span class="s2">&quot;status&quot;</span><span class="p">:</span> <span class="s2">&quot;published&quot;</span><span class="p">},</span>
+            <span class="n">timeout</span><span class="o">=</span><span class="n">_TIMEOUT</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="k">if</span> <span class="n">dep_resp</span><span class="o">.</span><span class="n">status_code</span> <span class="o">==</span> <span class="mi">200</span><span class="p">:</span>  <span class="c1"># noqa: PLR2004</span>
+            <span class="k">for</span> <span class="n">hit</span> <span class="ow">in</span> <span class="n">dep_resp</span><span class="o">.</span><span class="n">json</span><span class="p">():</span>
+                <span class="n">rid</span> <span class="o">=</span> <span class="n">hit</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;id&quot;</span><span class="p">)</span>
+                <span class="k">if</span> <span class="n">rid</span> <span class="ow">and</span> <span class="n">rid</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">seen</span><span class="p">:</span>
+                    <span class="n">candidates</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">rid</span><span class="p">,</span> <span class="s2">&quot;depositions&quot;</span><span class="p">))</span>
+                    <span class="n">seen</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">rid</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">candidates</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_new_deposition</span><span class="p">(</span>  <span class="c1"># noqa: PLR0913</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">client</span><span class="p">:</span> <span class="n">httpx</span><span class="o">.</span><span class="n">Client</span><span class="p">,</span>
+        <span class="n">owner</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">repo</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">version</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">cff</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">publication_date</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]:</span>
+        <span class="n">meta</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_new_deposition_metadata</span><span class="p">(</span>
+            <span class="n">owner</span><span class="p">,</span> <span class="n">repo</span><span class="p">,</span> <span class="n">version</span><span class="p">,</span> <span class="n">cff</span><span class="p">,</span> <span class="n">publication_date</span>
+        <span class="p">)</span>
         <span class="n">resp</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">post</span><span class="p">(</span>
-            <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">base_url</span><span class="si">}</span><span class="s2">/depositions&quot;</span><span class="p">,</span>
-            <span class="n">json</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;metadata&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">_metadata</span><span class="p">(</span><span class="n">owner</span><span class="p">,</span> <span class="n">repo</span><span class="p">,</span> <span class="n">version</span><span class="p">)},</span>
+            <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">base_url</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="n">_DEPOSIT_PATH</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
+            <span class="n">json</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;metadata&quot;</span><span class="p">:</span> <span class="n">meta</span><span class="p">},</span>
             <span class="n">timeout</span><span class="o">=</span><span class="n">_TIMEOUT</span><span class="p">,</span>
         <span class="p">)</span>
         <span class="n">resp</span><span class="o">.</span><span class="n">raise_for_status</span><span class="p">()</span>
         <span class="k">return</span> <span class="n">resp</span><span class="o">.</span><span class="n">json</span><span class="p">()</span>
 
-    <span class="k">def</span><span class="w"> </span><span class="nf">_new_version</span><span class="p">(</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_new_version</span><span class="p">(</span>  <span class="c1"># noqa: PLR0913</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">client</span><span class="p">:</span> <span class="n">httpx</span><span class="o">.</span><span class="n">Client</span><span class="p">,</span>
         <span class="n">record_id</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
         <span class="n">owner</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
         <span class="n">repo</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
         <span class="n">version</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">cff</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">publication_date</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Branch a new draft version from an existing concept record.&quot;&quot;&quot;</span>
         <span class="n">resp</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">post</span><span class="p">(</span>
-            <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">base_url</span><span class="si">}</span><span class="s2">/depositions/</span><span class="si">{</span><span class="n">record_id</span><span class="si">}</span><span class="s2">/actions/newversion&quot;</span><span class="p">,</span>
+            <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">base_url</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="n">_DEPOSIT_PATH</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="n">record_id</span><span class="si">}</span><span class="s2">/actions/newversion&quot;</span><span class="p">,</span>
             <span class="n">timeout</span><span class="o">=</span><span class="n">_TIMEOUT</span><span class="p">,</span>
         <span class="p">)</span>
         <span class="n">resp</span><span class="o">.</span><span class="n">raise_for_status</span><span class="p">()</span>
@@ -772,78 +934,201 @@
         <span class="c1"># Remove files copied from the parent version before we upload ours.</span>
         <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">draft</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;files&quot;</span><span class="p">,</span> <span class="p">[]):</span>
             <span class="n">client</span><span class="o">.</span><span class="n">delete</span><span class="p">(</span>
-                <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">base_url</span><span class="si">}</span><span class="s2">/depositions/</span><span class="si">{</span><span class="n">draft_id</span><span class="si">}</span><span class="s2">/files/</span><span class="si">{</span><span class="n">f</span><span class="p">[</span><span class="s1">&#39;id&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
+                <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">base_url</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="n">_DEPOSIT_PATH</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="n">draft_id</span><span class="si">}</span><span class="s2">/files/</span><span class="si">{</span><span class="n">f</span><span class="p">[</span><span class="s1">&#39;id&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
                 <span class="n">timeout</span><span class="o">=</span><span class="n">_TIMEOUT</span><span class="p">,</span>
             <span class="p">)</span>
 
-        <span class="c1"># Update metadata (version string, title, etc.)</span>
+        <span class="c1"># Merge our fields into the inherited metadata.</span>
+        <span class="c1"># CITATION.cff fields (creators, title, description) take precedence so</span>
+        <span class="c1"># the record reflects the current state of the project&#39;s citation info.</span>
+        <span class="c1"># Strip read-only and format-incompatible fields that Zenodo rejects on PUT:</span>
+        <span class="c1"># - doi/recid/concept* are server-managed</span>
+        <span class="c1"># - dates can have a legacy format the current API validation rejects</span>
+        <span class="n">_STRIP_INHERITED</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s2">&quot;doi&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;prereserve_doi&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;recid&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;conceptdoi&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;conceptrecid&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;dates&quot;</span><span class="p">,</span>
+        <span class="p">}</span>
+        <span class="n">inherited</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="n">k</span><span class="p">:</span> <span class="n">v</span>
+            <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">draft</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;metadata&quot;</span><span class="p">,</span> <span class="p">{})</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
+            <span class="k">if</span> <span class="n">k</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">_STRIP_INHERITED</span>
+        <span class="p">}</span>
+        <span class="n">our_meta</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_base_metadata</span><span class="p">(</span><span class="n">owner</span><span class="p">,</span> <span class="n">repo</span><span class="p">,</span> <span class="n">version</span><span class="p">,</span> <span class="n">cff</span><span class="p">,</span> <span class="n">publication_date</span><span class="p">)</span>
+        <span class="n">merged</span> <span class="o">=</span> <span class="p">{</span><span class="o">**</span><span class="n">inherited</span><span class="p">,</span> <span class="o">**</span><span class="n">our_meta</span><span class="p">}</span>
         <span class="n">client</span><span class="o">.</span><span class="n">put</span><span class="p">(</span>
-            <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">base_url</span><span class="si">}</span><span class="s2">/depositions/</span><span class="si">{</span><span class="n">draft_id</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
-            <span class="n">json</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;metadata&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">_metadata</span><span class="p">(</span><span class="n">owner</span><span class="p">,</span> <span class="n">repo</span><span class="p">,</span> <span class="n">version</span><span class="p">)},</span>
+            <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">base_url</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="n">_DEPOSIT_PATH</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="n">draft_id</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
+            <span class="n">json</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;metadata&quot;</span><span class="p">:</span> <span class="n">merged</span><span class="p">},</span>
             <span class="n">timeout</span><span class="o">=</span><span class="n">_TIMEOUT</span><span class="p">,</span>
         <span class="p">)</span><span class="o">.</span><span class="n">raise_for_status</span><span class="p">()</span>
 
         <span class="k">return</span> <span class="n">draft</span>
 
-    <span class="k">def</span><span class="w"> </span><span class="nf">_upload_file</span><span class="p">(</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_upload_file</span><span class="p">(</span>  <span class="c1"># noqa: PLR0913</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">client</span><span class="p">:</span> <span class="n">httpx</span><span class="o">.</span><span class="n">Client</span><span class="p">,</span>
         <span class="n">bucket_url</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
         <span class="n">owner</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
         <span class="n">repo</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
         <span class="n">tag</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">on_progress</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">],</span> <span class="kc">None</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
         <span class="n">archive_url</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;https://github.com/</span><span class="si">{</span><span class="n">owner</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="n">repo</span><span class="si">}</span><span class="s2">/archive/refs/tags/</span><span class="si">{</span><span class="n">tag</span><span class="si">}</span><span class="s2">.zip&quot;</span>
         <span class="n">filename</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">repo</span><span class="si">}</span><span class="s2">-</span><span class="si">{</span><span class="n">tag</span><span class="si">}</span><span class="s2">.zip&quot;</span>
-        <span class="k">with</span> <span class="n">httpx</span><span class="o">.</span><span class="n">stream</span><span class="p">(</span>
-            <span class="s2">&quot;GET&quot;</span><span class="p">,</span> <span class="n">archive_url</span><span class="p">,</span> <span class="n">follow_redirects</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">timeout</span><span class="o">=</span><span class="n">_UPLOAD_TIMEOUT</span>
-        <span class="p">)</span> <span class="k">as</span> <span class="n">stream</span><span class="p">:</span>
-            <span class="n">stream</span><span class="o">.</span><span class="n">raise_for_status</span><span class="p">()</span>
-            <span class="n">client</span><span class="o">.</span><span class="n">put</span><span class="p">(</span>
-                <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">bucket_url</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="n">filename</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
-                <span class="n">content</span><span class="o">=</span><span class="n">stream</span><span class="o">.</span><span class="n">iter_bytes</span><span class="p">(),</span>
-                <span class="n">timeout</span><span class="o">=</span><span class="n">_UPLOAD_TIMEOUT</span><span class="p">,</span>
-            <span class="p">)</span><span class="o">.</span><span class="n">raise_for_status</span><span class="p">()</span>
+
+        <span class="c1"># Stream download so callers can track progress.</span>
+        <span class="n">buf</span> <span class="o">=</span> <span class="nb">bytearray</span><span class="p">()</span>
+        <span class="k">with</span> <span class="p">(</span>
+            <span class="n">httpx</span><span class="o">.</span><span class="n">Client</span><span class="p">()</span> <span class="k">as</span> <span class="n">dl</span><span class="p">,</span>
+            <span class="n">dl</span><span class="o">.</span><span class="n">stream</span><span class="p">(</span>
+                <span class="s2">&quot;GET&quot;</span><span class="p">,</span> <span class="n">archive_url</span><span class="p">,</span> <span class="n">follow_redirects</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">timeout</span><span class="o">=</span><span class="n">_UPLOAD_TIMEOUT</span>
+            <span class="p">)</span> <span class="k">as</span> <span class="n">resp</span><span class="p">,</span>
+        <span class="p">):</span>
+            <span class="n">resp</span><span class="o">.</span><span class="n">raise_for_status</span><span class="p">()</span>
+            <span class="n">total</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">resp</span><span class="o">.</span><span class="n">headers</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;content-length&quot;</span><span class="p">,</span> <span class="mi">0</span><span class="p">))</span>
+            <span class="k">for</span> <span class="n">chunk</span> <span class="ow">in</span> <span class="n">resp</span><span class="o">.</span><span class="n">iter_bytes</span><span class="p">(</span><span class="n">chunk_size</span><span class="o">=</span><span class="mi">65536</span><span class="p">):</span>
+                <span class="n">buf</span> <span class="o">+=</span> <span class="n">chunk</span>
+                <span class="k">if</span> <span class="n">on_progress</span><span class="p">:</span>
+                    <span class="n">on_progress</span><span class="p">(</span><span class="s2">&quot;download&quot;</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">buf</span><span class="p">),</span> <span class="n">total</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">on_progress</span><span class="p">:</span>
+            <span class="n">on_progress</span><span class="p">(</span><span class="s2">&quot;download&quot;</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">buf</span><span class="p">),</span> <span class="nb">len</span><span class="p">(</span><span class="n">buf</span><span class="p">))</span>  <span class="c1"># mark 100% complete</span>
+
+        <span class="c1"># Stream upload from the buffer so callers can track progress.</span>
+        <span class="n">uploaded</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="n">total</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">buf</span><span class="p">)</span>
+
+        <span class="k">def</span><span class="w"> </span><span class="nf">_iter_buf</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">Generator</span><span class="p">[</span><span class="nb">bytes</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">]:</span>
+            <span class="k">nonlocal</span> <span class="n">uploaded</span>
+            <span class="n">view</span> <span class="o">=</span> <span class="nb">memoryview</span><span class="p">(</span><span class="n">buf</span><span class="p">)</span>
+            <span class="n">chunk_size</span> <span class="o">=</span> <span class="mi">65536</span>
+            <span class="n">offset</span> <span class="o">=</span> <span class="mi">0</span>
+            <span class="k">while</span> <span class="n">offset</span> <span class="o">&lt;</span> <span class="n">total</span><span class="p">:</span>
+                <span class="n">chunk</span> <span class="o">=</span> <span class="nb">bytes</span><span class="p">(</span><span class="n">view</span><span class="p">[</span><span class="n">offset</span> <span class="p">:</span> <span class="n">offset</span> <span class="o">+</span> <span class="n">chunk_size</span><span class="p">])</span>
+                <span class="n">uploaded</span> <span class="o">+=</span> <span class="nb">len</span><span class="p">(</span><span class="n">chunk</span><span class="p">)</span>
+                <span class="k">if</span> <span class="n">on_progress</span><span class="p">:</span>
+                    <span class="n">on_progress</span><span class="p">(</span><span class="s2">&quot;upload&quot;</span><span class="p">,</span> <span class="n">uploaded</span><span class="p">,</span> <span class="n">total</span><span class="p">)</span>
+                <span class="n">offset</span> <span class="o">+=</span> <span class="n">chunk_size</span>
+                <span class="k">yield</span> <span class="n">chunk</span>  <span class="c1"># type: ignore[misc]</span>
+
+        <span class="n">client</span><span class="o">.</span><span class="n">put</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">bucket_url</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="n">filename</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
+            <span class="n">content</span><span class="o">=</span><span class="n">_iter_buf</span><span class="p">(),</span>
+            <span class="n">headers</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;Content-Length&quot;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">total</span><span class="p">)},</span>
+            <span class="n">timeout</span><span class="o">=</span><span class="n">_UPLOAD_TIMEOUT</span><span class="p">,</span>
+        <span class="p">)</span><span class="o">.</span><span class="n">raise_for_status</span><span class="p">()</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">_publish</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">client</span><span class="p">:</span> <span class="n">httpx</span><span class="o">.</span><span class="n">Client</span><span class="p">,</span> <span class="n">deposition_id</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]:</span>
         <span class="n">resp</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">post</span><span class="p">(</span>
-            <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">base_url</span><span class="si">}</span><span class="s2">/depositions/</span><span class="si">{</span><span class="n">deposition_id</span><span class="si">}</span><span class="s2">/actions/publish&quot;</span><span class="p">,</span>
+            <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">base_url</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="n">_DEPOSIT_PATH</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="n">deposition_id</span><span class="si">}</span><span class="s2">/actions/publish&quot;</span><span class="p">,</span>
             <span class="n">timeout</span><span class="o">=</span><span class="n">_TIMEOUT</span><span class="p">,</span>
         <span class="p">)</span>
         <span class="n">resp</span><span class="o">.</span><span class="n">raise_for_status</span><span class="p">()</span>
         <span class="k">return</span> <span class="n">resp</span><span class="o">.</span><span class="n">json</span><span class="p">()</span>
 
-    <span class="k">def</span><span class="w"> </span><span class="nf">upload_release</span><span class="p">(</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_resolve_deposition</span><span class="p">(</span>  <span class="c1"># noqa: PLR0913</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">client</span><span class="p">:</span> <span class="n">httpx</span><span class="o">.</span><span class="n">Client</span><span class="p">,</span>
+        <span class="n">owner</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">repo</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">version</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">cff</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">publication_date</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">concept_doi</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">diag</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">],</span> <span class="nb">bool</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return ``(deposition_draft, new_concept)`` for the upload.</span>
+
+<span class="sd">        Tries to branch a new version off an existing record (the first</span>
+<span class="sd">        candidate that accepts the ``newversion`` action wins). Falls back to a</span>
+<span class="sd">        new standalone concept if no candidate accepts it. Diagnostic lines are</span>
+<span class="sd">        appended to *diag*.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="n">concept_doi</span><span class="p">:</span>
+            <span class="n">candidates</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_find_records_by_concept_doi</span><span class="p">(</span><span class="n">client</span><span class="p">,</span> <span class="n">concept_doi</span><span class="p">)</span>
+            <span class="n">diag</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;concept-doi override: </span><span class="si">{</span><span class="n">concept_doi</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">candidates</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_find_candidate_record_ids</span><span class="p">(</span><span class="n">client</span><span class="p">,</span> <span class="n">owner</span><span class="p">,</span> <span class="n">repo</span><span class="p">)</span>
+        <span class="n">diag</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;candidates: </span><span class="si">{</span><span class="p">[(</span><span class="n">rid</span><span class="p">,</span><span class="w"> </span><span class="n">src</span><span class="p">)</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">rid</span><span class="p">,</span><span class="w"> </span><span class="n">src</span><span class="w"> </span><span class="ow">in</span><span class="w"> </span><span class="n">candidates</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+        <span class="k">for</span> <span class="n">record_id</span><span class="p">,</span> <span class="n">id_source</span> <span class="ow">in</span> <span class="n">candidates</span><span class="p">:</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="n">deposition</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_new_version</span><span class="p">(</span>
+                    <span class="n">client</span><span class="p">,</span> <span class="n">record_id</span><span class="p">,</span> <span class="n">owner</span><span class="p">,</span> <span class="n">repo</span><span class="p">,</span> <span class="n">version</span><span class="p">,</span> <span class="n">cff</span><span class="p">,</span> <span class="n">publication_date</span>
+                <span class="p">)</span>
+                <span class="n">diag</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                    <span class="sa">f</span><span class="s2">&quot;newversion: ok id=</span><span class="si">{</span><span class="n">record_id</span><span class="si">}</span><span class="s2"> source=</span><span class="si">{</span><span class="n">id_source</span><span class="si">}</span><span class="s2">&quot;</span>
+                    <span class="sa">f</span><span class="s2">&quot; draft=</span><span class="si">{</span><span class="n">deposition</span><span class="p">[</span><span class="s1">&#39;id&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span>
+                <span class="p">)</span>
+                <span class="k">return</span> <span class="n">deposition</span><span class="p">,</span> <span class="kc">False</span>
+            <span class="k">except</span> <span class="n">httpx</span><span class="o">.</span><span class="n">HTTPStatusError</span> <span class="k">as</span> <span class="n">nv_exc</span><span class="p">:</span>
+                <span class="n">diag</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                    <span class="sa">f</span><span class="s2">&quot;newversion: skip id=</span><span class="si">{</span><span class="n">record_id</span><span class="si">}</span><span class="s2"> source=</span><span class="si">{</span><span class="n">id_source</span><span class="si">}</span><span class="s2">&quot;</span>
+                    <span class="sa">f</span><span class="s2">&quot; — HTTP </span><span class="si">{</span><span class="n">nv_exc</span><span class="o">.</span><span class="n">response</span><span class="o">.</span><span class="n">status_code</span><span class="si">}</span><span class="s2">:&quot;</span>
+                    <span class="sa">f</span><span class="s2">&quot; </span><span class="si">{</span><span class="n">nv_exc</span><span class="o">.</span><span class="n">response</span><span class="o">.</span><span class="n">text</span><span class="p">[:</span><span class="mi">120</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span>
+                <span class="p">)</span>
+
+        <span class="n">diag</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;newversion: all candidates failed, creating new concept&quot;</span><span class="p">)</span>
+        <span class="n">deposition</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_new_deposition</span><span class="p">(</span>
+            <span class="n">client</span><span class="p">,</span> <span class="n">owner</span><span class="p">,</span> <span class="n">repo</span><span class="p">,</span> <span class="n">version</span><span class="p">,</span> <span class="n">cff</span><span class="p">,</span> <span class="n">publication_date</span>
+        <span class="p">)</span>
+        <span class="k">return</span> <span class="n">deposition</span><span class="p">,</span> <span class="kc">True</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">upload_release</span><span class="p">(</span>  <span class="c1"># noqa: PLR0913</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">owner</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
         <span class="n">repo</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
         <span class="n">tag</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
         <span class="n">version</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">concept_doi</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">publication_date</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">on_progress</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">],</span> <span class="kc">None</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Upload and publish a GitHub release tag to Zenodo.</span>
 
-<span class="sd">        If an existing Zenodo record for the repository is found, the upload is</span>
-<span class="sd">        created as a new version under the same concept DOI. Otherwise a new</span>
-<span class="sd">        concept is created.</span>
+<span class="sd">        If *concept_doi* is given, the upload is linked under that specific</span>
+<span class="sd">        concept DOI rather than the one discovered automatically.  Otherwise</span>
+<span class="sd">        the tool searches for an existing Zenodo record associated with the</span>
+<span class="sd">        repository and uses that (falling back to a new standalone deposition).</span>
+
+<span class="sd">        *publication_date* (``YYYY-MM-DD``) sets the Zenodo publication date so</span>
+<span class="sd">        that versions are ordered by their original GitHub release date rather</span>
+<span class="sd">        than by the time the upload ran.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="n">client</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_client</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">_make_client</span><span class="p">()</span>
+        <span class="n">cff</span> <span class="o">=</span> <span class="n">_fetch_citation_cff</span><span class="p">(</span><span class="n">owner</span><span class="p">,</span> <span class="n">repo</span><span class="p">)</span>
+        <span class="n">diag</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span><span class="sa">f</span><span class="s2">&quot;CITATION.cff: </span><span class="si">{</span><span class="s1">&#39;found&#39;</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">cff</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="s1">&#39;not found&#39;</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">]</span>
+        <span class="k">if</span> <span class="n">publication_date</span><span class="p">:</span>
+            <span class="n">diag</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;publication_date: </span><span class="si">{</span><span class="n">publication_date</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
         <span class="k">try</span><span class="p">:</span>
-            <span class="n">record_id</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_find_latest_record_id</span><span class="p">(</span><span class="n">client</span><span class="p">,</span> <span class="n">owner</span><span class="p">,</span> <span class="n">repo</span><span class="p">)</span>
-            <span class="k">if</span> <span class="n">record_id</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-                <span class="n">deposition</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_new_version</span><span class="p">(</span><span class="n">client</span><span class="p">,</span> <span class="n">record_id</span><span class="p">,</span> <span class="n">owner</span><span class="p">,</span> <span class="n">repo</span><span class="p">,</span> <span class="n">version</span><span class="p">)</span>
-            <span class="k">else</span><span class="p">:</span>
-                <span class="n">deposition</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_new_deposition</span><span class="p">(</span><span class="n">client</span><span class="p">,</span> <span class="n">owner</span><span class="p">,</span> <span class="n">repo</span><span class="p">,</span> <span class="n">version</span><span class="p">)</span>
+            <span class="n">deposition</span><span class="p">,</span> <span class="n">new_concept</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_resolve_deposition</span><span class="p">(</span>
+                <span class="n">client</span><span class="p">,</span> <span class="n">owner</span><span class="p">,</span> <span class="n">repo</span><span class="p">,</span> <span class="n">version</span><span class="p">,</span> <span class="n">cff</span><span class="p">,</span> <span class="n">publication_date</span><span class="p">,</span> <span class="n">concept_doi</span><span class="p">,</span> <span class="n">diag</span>
+            <span class="p">)</span>
 
-            <span class="bp">self</span><span class="o">.</span><span class="n">_upload_file</span><span class="p">(</span><span class="n">client</span><span class="p">,</span> <span class="n">deposition</span><span class="p">[</span><span class="s2">&quot;links&quot;</span><span class="p">][</span><span class="s2">&quot;bucket&quot;</span><span class="p">],</span> <span class="n">owner</span><span class="p">,</span> <span class="n">repo</span><span class="p">,</span> <span class="n">tag</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_upload_file</span><span class="p">(</span>
+                <span class="n">client</span><span class="p">,</span> <span class="n">deposition</span><span class="p">[</span><span class="s2">&quot;links&quot;</span><span class="p">][</span><span class="s2">&quot;bucket&quot;</span><span class="p">],</span> <span class="n">owner</span><span class="p">,</span> <span class="n">repo</span><span class="p">,</span> <span class="n">tag</span><span class="p">,</span> <span class="n">on_progress</span>
+            <span class="p">)</span>
             <span class="n">published</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_publish</span><span class="p">(</span><span class="n">client</span><span class="p">,</span> <span class="n">deposition</span><span class="p">[</span><span class="s2">&quot;id&quot;</span><span class="p">])</span>
-            <span class="k">return</span> <span class="p">{</span>
+            <span class="n">result</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
                 <span class="s2">&quot;version&quot;</span><span class="p">:</span> <span class="n">version</span><span class="p">,</span>
                 <span class="s2">&quot;tag&quot;</span><span class="p">:</span> <span class="n">tag</span><span class="p">,</span>
                 <span class="s2">&quot;concept_doi&quot;</span><span class="p">:</span> <span class="n">published</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;conceptdoi&quot;</span><span class="p">),</span>
                 <span class="s2">&quot;doi&quot;</span><span class="p">:</span> <span class="n">published</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;doi&quot;</span><span class="p">),</span>
                 <span class="s2">&quot;zenodo_url&quot;</span><span class="p">:</span> <span class="n">published</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;links&quot;</span><span class="p">,</span> <span class="p">{})</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;html&quot;</span><span class="p">),</span>
                 <span class="s2">&quot;status&quot;</span><span class="p">:</span> <span class="s2">&quot;published&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;diag&quot;</span><span class="p">:</span> <span class="n">diag</span><span class="p">,</span>
             <span class="p">}</span>
+            <span class="k">if</span> <span class="n">new_concept</span><span class="p">:</span>
+                <span class="n">result</span><span class="p">[</span><span class="s2">&quot;warning&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span>
+                    <span class="s2">&quot;Could not add this upload as a new version of any existing&quot;</span>
+                    <span class="s2">&quot; Zenodo record. A standalone deposition was created instead.&quot;</span>
+                    <span class="s2">&quot; Run with --verbose to see each candidate tried.&quot;</span>
+                    <span class="s2">&quot; Contact Zenodo support to have it merged into the existing&quot;</span>
+                    <span class="s2">&quot; concept record if needed.&quot;</span>
+                <span class="p">)</span>
+            <span class="k">return</span> <span class="n">result</span>
         <span class="k">except</span> <span class="n">httpx</span><span class="o">.</span><span class="n">HTTPStatusError</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
             <span class="n">result</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
                 <span class="s2">&quot;version&quot;</span><span class="p">:</span> <span class="n">version</span><span class="p">,</span>
@@ -851,15 +1136,17 @@
                 <span class="s2">&quot;status&quot;</span><span class="p">:</span> <span class="s2">&quot;error&quot;</span><span class="p">,</span>
                 <span class="s2">&quot;error&quot;</span><span class="p">:</span> <span class="sa">f</span><span class="s2">&quot;HTTP </span><span class="si">{</span><span class="n">exc</span><span class="o">.</span><span class="n">response</span><span class="o">.</span><span class="n">status_code</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">exc</span><span class="o">.</span><span class="n">response</span><span class="o">.</span><span class="n">text</span><span class="p">[:</span><span class="mi">200</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
             <span class="p">}</span>
-            <span class="k">if</span> <span class="n">exc</span><span class="o">.</span><span class="n">response</span><span class="o">.</span><span class="n">status_code</span> <span class="o">==</span> <span class="mi">403</span><span class="p">:</span>  <span class="c1"># noqa: PLR2004</span>
+            <span class="k">if</span> <span class="n">exc</span><span class="o">.</span><span class="n">response</span><span class="o">.</span><span class="n">status_code</span> <span class="ow">in</span> <span class="p">(</span><span class="mi">403</span><span class="p">,</span> <span class="mi">404</span><span class="p">):</span>
                 <span class="n">result</span><span class="p">[</span><span class="s2">&quot;hint&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span>
-                    <span class="s2">&quot;403 Forbidden: your ZENODO_TOKEN does not have edit access to&quot;</span>
-                    <span class="s2">&quot; the existing Zenodo record for this repository. This happens&quot;</span>
-                    <span class="s2">&quot; when the original records were created by the GitHub-Zenodo&quot;</span>
-                    <span class="s2">&quot; webhook under a different Zenodo account. To fix this, log in&quot;</span>
-                    <span class="s2">&quot; to Zenodo as the record owner, open the record, and use&quot;</span>
-                    <span class="s2">&quot; &#39;Edit &gt; Share&#39; to grant your account curator access — or&quot;</span>
-                    <span class="s2">&quot; transfer ownership via the Zenodo support team.&quot;</span>
+                    <span class="sa">f</span><span class="s2">&quot;HTTP </span><span class="si">{</span><span class="n">exc</span><span class="o">.</span><span class="n">response</span><span class="o">.</span><span class="n">status_code</span><span class="si">}</span><span class="s2">: your ZENODO_TOKEN does not&quot;</span>
+                    <span class="s2">&quot; have edit access to the existing Zenodo record for this&quot;</span>
+                    <span class="s2">&quot; repository. This happens when the original records were&quot;</span>
+                    <span class="s2">&quot; created by the GitHub-Zenodo webhook under a different Zenodo&quot;</span>
+                    <span class="s2">&quot; account — Zenodo returns 404 for records owned by another&quot;</span>
+                    <span class="s2">&quot; account and 403 when access is explicitly denied. To fix&quot;</span>
+                    <span class="s2">&quot; this, log in to Zenodo as the record owner, open the record,&quot;</span>
+                    <span class="s2">&quot; and use &#39;Edit &gt; Share&#39; to grant your account curator access&quot;</span>
+                    <span class="s2">&quot; — or transfer ownership via the Zenodo support team.&quot;</span>
                 <span class="p">)</span>
             <span class="k">return</span> <span class="n">result</span>
         <span class="k">except</span> <span class="n">httpx</span><span class="o">.</span><span class="n">RequestError</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
@@ -894,6 +1181,27 @@
     <span class="k">return</span> <span class="n">result</span>
 
 
+<span class="k">def</span><span class="w"> </span><span class="nf">_latest_version</span><span class="p">(</span><span class="n">versions</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">Version</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return the highest parseable semver in *versions*, or None if none parse.&quot;&quot;&quot;</span>
+    <span class="n">parsed</span> <span class="o">=</span> <span class="p">[</span><span class="n">p</span> <span class="k">for</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">versions</span> <span class="k">if</span> <span class="p">(</span><span class="n">p</span> <span class="o">:=</span> <span class="n">_parse</span><span class="p">(</span><span class="n">_normalize</span><span class="p">(</span><span class="n">v</span><span class="p">)))</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">]</span>
+    <span class="k">return</span> <span class="nb">max</span><span class="p">(</span><span class="n">parsed</span><span class="p">)</span> <span class="k">if</span> <span class="n">parsed</span> <span class="k">else</span> <span class="kc">None</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_filter_since_latest</span><span class="p">(</span>
+    <span class="n">versions</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+    <span class="n">zenodo_versions</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Keep only versions strictly newer than the latest Zenodo archive.</span>
+
+<span class="sd">    If Zenodo has no parseable version yet, every candidate is returned (there</span>
+<span class="sd">    is no floor to scan from). Non-parseable candidates are dropped.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">floor</span> <span class="o">=</span> <span class="n">_latest_version</span><span class="p">(</span><span class="n">zenodo_versions</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">floor</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">versions</span>
+    <span class="k">return</span> <span class="p">[</span><span class="n">v</span> <span class="k">for</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">versions</span> <span class="k">if</span> <span class="p">(</span><span class="n">p</span> <span class="o">:=</span> <span class="n">_parse</span><span class="p">(</span><span class="n">v</span><span class="p">))</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">p</span> <span class="o">&gt;</span> <span class="n">floor</span><span class="p">]</span>
+
+
 <span class="k">def</span><span class="w"> </span><span class="nf">fix_repo</span><span class="p">(</span>  <span class="c1"># noqa: PLR0913</span>
     <span class="n">owner</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
     <span class="n">repo</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
@@ -901,22 +1209,34 @@
     <span class="n">version</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">from_version</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">to_version</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">since_latest</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">concept_doi</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">force</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
     <span class="n">sandbox</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
     <span class="n">github_collector</span><span class="p">:</span> <span class="n">GitHubCollector</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">zenodo_collector</span><span class="p">:</span> <span class="n">ZenodoCollector</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">on_progress</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">],</span> <span class="kc">None</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Upload missing GitHub releases to Zenodo.</span>
 
-<span class="sd">    If *version* is given, only that version is uploaded.</span>
+<span class="sd">    If *version* is given, only that version is uploaded. When that version is</span>
+<span class="sd">    already archived on Zenodo it is skipped unless *force* is True (which</span>
+<span class="sd">    uploads it again as an additional new version).</span>
 <span class="sd">    Otherwise every version reported as missing by drift detection is uploaded,</span>
 <span class="sd">    optionally filtered to the semver range [from_version, to_version] inclusive.</span>
 <span class="sd">    Non-parseable versions are excluded when a range is active.</span>
+
+<span class="sd">    When *since_latest* is True, only missing versions strictly newer than the</span>
+<span class="sd">    latest version already on Zenodo are uploaded. This guarantees every upload</span>
+<span class="sd">    appends to the head of the version chain and never reorders existing</span>
+<span class="sd">    versions.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
     <span class="n">uploader</span> <span class="o">=</span> <span class="n">ZenodoUploader</span><span class="p">(</span><span class="n">token</span><span class="o">=</span><span class="n">token</span><span class="p">,</span> <span class="n">sandbox</span><span class="o">=</span><span class="n">sandbox</span><span class="p">)</span>
     <span class="n">results</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]</span> <span class="o">=</span> <span class="p">[]</span>
 
     <span class="n">gh_collector</span> <span class="o">=</span> <span class="n">github_collector</span> <span class="ow">or</span> <span class="n">GitHubCollector</span><span class="p">(</span><span class="n">owner</span><span class="p">,</span> <span class="n">repo</span><span class="p">)</span>
     <span class="n">releases</span> <span class="o">=</span> <span class="n">gh_collector</span><span class="o">.</span><span class="n">get_releases</span><span class="p">()</span>
+    <span class="n">release_dates</span> <span class="o">=</span> <span class="n">gh_collector</span><span class="o">.</span><span class="n">get_release_dates</span><span class="p">()</span>
 
     <span class="k">if</span> <span class="n">version</span><span class="p">:</span>
         <span class="c1"># Find the matching tag (may have a &#39;v&#39; prefix or not).</span>
@@ -934,8 +1254,32 @@
                     <span class="s2">&quot;error&quot;</span><span class="p">:</span> <span class="sa">f</span><span class="s2">&quot;No GitHub release found matching version &#39;</span><span class="si">{</span><span class="n">version</span><span class="si">}</span><span class="s2">&#39;.&quot;</span><span class="p">,</span>
                 <span class="p">}</span>
             <span class="p">]</span>
+        <span class="c1"># Guard against creating a duplicate: skip if this version is already</span>
+        <span class="c1"># archived on Zenodo, unless the caller explicitly forces a re-upload.</span>
+        <span class="n">zen_collector</span> <span class="o">=</span> <span class="n">zenodo_collector</span> <span class="ow">or</span> <span class="n">ZenodoCollector</span><span class="p">(</span><span class="n">owner</span><span class="p">,</span> <span class="n">repo</span><span class="p">)</span>
+        <span class="n">existing</span> <span class="o">=</span> <span class="p">{</span><span class="n">_normalize</span><span class="p">(</span><span class="n">v</span><span class="p">)</span> <span class="k">for</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">zen_collector</span><span class="o">.</span><span class="n">get_versions</span><span class="p">()}</span>
+        <span class="k">if</span> <span class="n">norm_target</span> <span class="ow">in</span> <span class="n">existing</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">force</span><span class="p">:</span>
+            <span class="k">return</span> <span class="p">[</span>
+                <span class="p">{</span>
+                    <span class="s2">&quot;version&quot;</span><span class="p">:</span> <span class="n">norm_target</span><span class="p">,</span>
+                    <span class="s2">&quot;tag&quot;</span><span class="p">:</span> <span class="n">tag</span><span class="p">,</span>
+                    <span class="s2">&quot;status&quot;</span><span class="p">:</span> <span class="s2">&quot;skipped&quot;</span><span class="p">,</span>
+                    <span class="s2">&quot;reason&quot;</span><span class="p">:</span> <span class="p">(</span>
+                        <span class="sa">f</span><span class="s2">&quot;Version </span><span class="si">{</span><span class="n">norm_target</span><span class="si">}</span><span class="s2"> is already archived on Zenodo.&quot;</span>
+                        <span class="s2">&quot; Use --force to upload it again as a new version.&quot;</span>
+                    <span class="p">),</span>
+                <span class="p">}</span>
+            <span class="p">]</span>
         <span class="n">results</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-            <span class="n">uploader</span><span class="o">.</span><span class="n">upload_release</span><span class="p">(</span><span class="n">owner</span><span class="p">,</span> <span class="n">repo</span><span class="p">,</span> <span class="n">tag</span><span class="o">=</span><span class="n">tag</span><span class="p">,</span> <span class="n">version</span><span class="o">=</span><span class="n">norm_target</span><span class="p">)</span>
+            <span class="n">uploader</span><span class="o">.</span><span class="n">upload_release</span><span class="p">(</span>
+                <span class="n">owner</span><span class="p">,</span>
+                <span class="n">repo</span><span class="p">,</span>
+                <span class="n">tag</span><span class="o">=</span><span class="n">tag</span><span class="p">,</span>
+                <span class="n">version</span><span class="o">=</span><span class="n">norm_target</span><span class="p">,</span>
+                <span class="n">concept_doi</span><span class="o">=</span><span class="n">concept_doi</span><span class="p">,</span>
+                <span class="n">publication_date</span><span class="o">=</span><span class="n">release_dates</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">tag</span><span class="p">),</span>
+                <span class="n">on_progress</span><span class="o">=</span><span class="n">on_progress</span><span class="p">,</span>
+            <span class="p">)</span>
         <span class="p">)</span>
     <span class="k">else</span><span class="p">:</span>
         <span class="n">zen_collector</span> <span class="o">=</span> <span class="n">zenodo_collector</span> <span class="ow">or</span> <span class="n">ZenodoCollector</span><span class="p">(</span><span class="n">owner</span><span class="p">,</span> <span class="n">repo</span><span class="p">)</span>
@@ -947,6 +1291,9 @@
         <span class="c1"># correct predecessor and Zenodo&#39;s version chain reflects semver order.</span>
         <span class="c1"># Versions that cannot be parsed as semver are appended after the rest.</span>
         <span class="n">missing</span><span class="o">.</span><span class="n">sort</span><span class="p">(</span><span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">v</span><span class="p">:</span> <span class="p">(</span><span class="n">_parse</span><span class="p">(</span><span class="n">v</span><span class="p">)</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">,</span> <span class="n">_parse</span><span class="p">(</span><span class="n">v</span><span class="p">)</span> <span class="ow">or</span> <span class="n">v</span><span class="p">))</span>
+
+        <span class="k">if</span> <span class="n">since_latest</span><span class="p">:</span>
+            <span class="n">missing</span> <span class="o">=</span> <span class="n">_filter_since_latest</span><span class="p">(</span><span class="n">missing</span><span class="p">,</span> <span class="n">zen_collector</span><span class="o">.</span><span class="n">get_versions</span><span class="p">())</span>
 
         <span class="k">if</span> <span class="n">from_version</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">to_version</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
             <span class="n">missing</span> <span class="o">=</span> <span class="n">_filter_by_range</span><span class="p">(</span><span class="n">missing</span><span class="p">,</span> <span class="n">from_version</span><span class="p">,</span> <span class="n">to_version</span><span class="p">)</span>
@@ -964,7 +1311,17 @@
                     <span class="p">}</span>
                 <span class="p">)</span>
                 <span class="k">continue</span>
-            <span class="n">results</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">uploader</span><span class="o">.</span><span class="n">upload_release</span><span class="p">(</span><span class="n">owner</span><span class="p">,</span> <span class="n">repo</span><span class="p">,</span> <span class="n">tag</span><span class="o">=</span><span class="n">tag</span><span class="p">,</span> <span class="n">version</span><span class="o">=</span><span class="n">ver</span><span class="p">))</span>
+            <span class="n">results</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                <span class="n">uploader</span><span class="o">.</span><span class="n">upload_release</span><span class="p">(</span>
+                    <span class="n">owner</span><span class="p">,</span>
+                    <span class="n">repo</span><span class="p">,</span>
+                    <span class="n">tag</span><span class="o">=</span><span class="n">tag</span><span class="p">,</span>
+                    <span class="n">version</span><span class="o">=</span><span class="n">ver</span><span class="p">,</span>
+                    <span class="n">concept_doi</span><span class="o">=</span><span class="n">concept_doi</span><span class="p">,</span>
+                    <span class="n">publication_date</span><span class="o">=</span><span class="n">release_dates</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">tag</span><span class="p">),</span>
+                    <span class="n">on_progress</span><span class="o">=</span><span class="n">on_progress</span><span class="p">,</span>
+                <span class="p">)</span>
+            <span class="p">)</span>
 
     <span class="k">return</span> <span class="n">results</span>
 </pre></div>

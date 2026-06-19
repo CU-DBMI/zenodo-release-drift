@@ -391,17 +391,37 @@ created at <a class="reference external" href="https://zenodo.org/account/settin
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">--to</span></code></p></td>
 <td><p>Only upload versions at or below this semver (inclusive)</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">--sandbox</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">--since-latest</span></code></p></td>
+<td><p>Only upload versions newer than the latest one already on Zenodo</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">--concept-doi</span></code></p></td>
+<td><p>Link uploads under a specific concept DOI (overrides record discovery)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">--force</span></code></p></td>
+<td><p>With <code class="docutils literal notranslate"><span class="pre">--version</span></code>, upload even if that version is already archived</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">--sandbox</span></code></p></td>
 <td><p>Target <code class="docutils literal notranslate"><span class="pre">sandbox.zenodo.org</span></code> instead of production</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">--json</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">--json</span></code></p></td>
 <td><p>Output results as JSON</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">--no-progress</span></code></p></td>
+<td><p>Disable the download/upload progress bar</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">--verbose</span></code></p></td>
+<td><p>Print diagnostic details (record lookup, <code class="docutils literal notranslate"><span class="pre">newversion</span></code> errors)</p></td>
 </tr>
 </tbody>
 </table>
 </div>
 <p><strong>How versions are grouped</strong>: if Zenodo already holds records for the repository, each upload is created as a new version under the same concept DOI so all versions remain linked.
-If no existing records are found, a new concept is created.</p>
+If no existing records are found, a new concept is created.
+You can also pass <code class="docutils literal notranslate"><span class="pre">--concept-doi</span></code> to link uploads under a specific concept explicitly (useful when automatic discovery picks the wrong record).
+Metadata (authors, description, license, keywords) is read from the repository’s <code class="docutils literal notranslate"><span class="pre">CITATION.cff</span></code> when present, and each record’s publication date is set to the original GitHub release date.</p>
+<p><strong>Note on version ordering</strong>: Zenodo orders versions within a concept by the order they were added (the <code class="docutils literal notranslate"><span class="pre">newversion</span></code> chain), not by semver or publication date.
+Uploading an <em>older</em> release after a newer one already exists will place it ahead of the newer one in the version list.
+To avoid this, use <code class="docutils literal notranslate"><span class="pre">--since-latest</span></code> to upload only releases newer than the latest version already on Zenodo, which always appends forward and never reorders existing records.</p>
 <p><strong>Note on uploaded source content</strong>: the archive uploaded for each version is fetched from GitHub’s tag archive endpoint at the moment <code class="docutils literal notranslate"><span class="pre">fix</span></code> runs, and reflects where the tag points at that time.
 For the vast majority of repositories this is identical to the original release — tags are not normally moved after publishing.
 If a tag has been amended since the original release was made, the archive will reflect the current state of the tag rather than its historical state; this is a property of how git tags work rather than a limitation of this tool.</p>
@@ -426,8 +446,11 @@ team to transfer ownership.</p></li>
 <span class="nb">export</span><span class="w"> </span><span class="nv">ZENODO_TOKEN</span><span class="o">=</span>your-token-here
 zenodo-release-drift<span class="w"> </span>fix<span class="w"> </span>owner/repo
 
-<span class="c1"># Upload a single specific release</span>
+<span class="c1"># Upload a single specific release (skipped if already archived)</span>
 zenodo-release-drift<span class="w"> </span>fix<span class="w"> </span>owner/repo<span class="w"> </span>--version<span class="w"> </span><span class="m">1</span>.2.3
+
+<span class="c1"># Re-upload a release that already exists as an additional new version</span>
+zenodo-release-drift<span class="w"> </span>fix<span class="w"> </span>owner/repo<span class="w"> </span>--version<span class="w"> </span><span class="m">1</span>.2.3<span class="w"> </span>--force
 
 <span class="c1"># Upload all missing releases from 1.0.0 onwards</span>
 zenodo-release-drift<span class="w"> </span>fix<span class="w"> </span>owner/repo<span class="w"> </span>--from<span class="w"> </span><span class="m">1</span>.0.0
@@ -437,6 +460,12 @@ zenodo-release-drift<span class="w"> </span>fix<span class="w"> </span>owner/rep
 
 <span class="c1"># Upload missing releases within a range</span>
 zenodo-release-drift<span class="w"> </span>fix<span class="w"> </span>owner/repo<span class="w"> </span>--from<span class="w"> </span><span class="m">1</span>.0.0<span class="w"> </span>--to<span class="w"> </span><span class="m">1</span>.4.0
+
+<span class="c1"># Upload only releases newer than what is already on Zenodo (safest for ordering)</span>
+zenodo-release-drift<span class="w"> </span>fix<span class="w"> </span>owner/repo<span class="w"> </span>--since-latest
+
+<span class="c1"># Link uploads under a specific concept DOI</span>
+zenodo-release-drift<span class="w"> </span>fix<span class="w"> </span>owner/repo<span class="w"> </span>--concept-doi<span class="w"> </span><span class="m">10</span>.5281/zenodo.1234567
 
 <span class="c1"># Test against the Zenodo sandbox before touching production</span>
 <span class="nb">export</span><span class="w"> </span><span class="nv">ZENODO_TOKEN</span><span class="o">=</span>your-sandbox-token-here
