@@ -4,8 +4,6 @@ Tests for main module.
 
 from __future__ import annotations
 
-from collections.abc import Generator
-from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -32,7 +30,7 @@ def _ok(json_data: object = None) -> MagicMock:
     """Return a mock httpx response with status 200."""
     resp = MagicMock()
     resp.status_code = 200
-    resp.json.return_value = json_data or {}
+    resp.json.return_value = json_data if json_data is not None else {}
     resp.raise_for_status.return_value = None
     return resp
 
@@ -47,13 +45,16 @@ def _err(status_code: int, text: str = "error") -> MagicMock:
     return resp
 
 
-@contextmanager
-def _mock_stream(*_args: object, **_kwargs: object) -> Generator[MagicMock, None, None]:
-    """Context manager simulating httpx.stream for _upload_file."""
-    stream = MagicMock()
-    stream.raise_for_status.return_value = None
-    stream.iter_bytes.return_value = iter([b"data"])
-    yield stream
+def _mock_dl_client() -> MagicMock:
+    """Return a mock httpx.Client that simulates downloading an archive."""
+    dl_resp = MagicMock()
+    dl_resp.raise_for_status.return_value = None
+    dl_resp.content = b"zipdata"
+    dl_client = MagicMock()
+    dl_client.__enter__ = MagicMock(return_value=dl_client)
+    dl_client.__exit__ = MagicMock(return_value=False)
+    dl_client.get.return_value = dl_resp
+    return dl_client
 
 
 def _mock_github(releases: list[str]) -> GitHubCollector:
@@ -73,6 +74,55 @@ def _mock_user_collector(repos: list[str]) -> GitHubUserCollector:
     m.username = "testuser"
     m.get_repos.return_value = repos
     return m
+
+
+class TestZenodoCollector:
+    def test_owner_and_repo_lowercased(self) -> None:
+        collector = ZenodoCollector("CytoMining", "CytoTable")
+        assert collector.owner == "cytomining"
+        assert collector.repo == "cytotable"
+
+    def test_repo_url_uses_lowercase(self) -> None:
+        collector = ZenodoCollector("CytoMining", "CytoTable")
+        assert collector._repo_url() == "https://github.com/cytomining/cytotable"
+
+    def test_hit_belongs_via_related_identifier_mixed_case(self) -> None:
+        # Zenodo stores the repo's original casing; matching must be
+        # case-insensitive since the collector lowercases owner/repo.
+        collector = ZenodoCollector("cytomining", "cytotable")
+        hit = {
+            "metadata": {
+                "related_identifiers": [
+                    {
+                        "relation": "isSupplementTo",
+                        "identifier": "https://github.com/cytomining/CytoTable/tree/v1.2.1",
+                    }
+                ]
+            }
+        }
+        assert collector._hit_belongs_to_repo(hit) is True
+
+    def test_hit_belongs_via_code_repository_mixed_case(self) -> None:
+        collector = ZenodoCollector("cytomining", "cytotable")
+        hit = {
+            "metadata": {
+                "custom": {
+                    "code:codeRepository": "https://github.com/cytomining/CytoTable"
+                }
+            }
+        }
+        assert collector._hit_belongs_to_repo(hit) is True
+
+    def test_hit_does_not_belong_to_other_repo(self) -> None:
+        collector = ZenodoCollector("cytomining", "cytotable")
+        hit = {
+            "metadata": {
+                "related_identifiers": [
+                    {"identifier": "https://github.com/other/project/tree/v1.0.0"}
+                ]
+            }
+        }
+        assert collector._hit_belongs_to_repo(hit) is False
 
 
 class TestGitHubCollector:
@@ -252,25 +302,94 @@ class TestZenodoUploader:
     def _uploader(self, client: MagicMock) -> ZenodoUploader:
         return ZenodoUploader(token="tok", client=client)
 
-    def test_find_latest_record_id_found(self) -> None:
+    def _no_candidates(self) -> list[object]:
+        """Two empty get responses: public-oldest then depositions."""
+        return [_ok({"hits": {"hits": []}}), _ok([])]
+
+    def test_find_candidates_public_oldest_first(self) -> None:
         record_id = 42
         client = MagicMock()
-        client.get.return_value = _ok({"hits": {"hits": [{"id": record_id}]}})
-        assert (
-            self._uploader(client)._find_latest_record_id(client, "o", "r") == record_id
-        )
+        client.get.side_effect = [
+            _ok({"hits": {"hits": [{"id": record_id}]}}),  # public oldest
+            _ok([]),  # depositions
+        ]
+        candidates = self._uploader(client)._find_candidate_record_ids(client, "o", "r")
+        assert candidates[0] == (record_id, "public-oldest")
 
-    def test_find_latest_record_id_no_hits(self) -> None:
+    def test_find_candidates_deduplicates(self) -> None:
+        record_id = 42
         client = MagicMock()
-        client.get.return_value = _ok({"hits": {"hits": []}})
-        assert self._uploader(client)._find_latest_record_id(client, "o", "r") is None
+        # Same ID appears in both public and depositions
+        client.get.side_effect = [
+            _ok({"hits": {"hits": [{"id": record_id}]}}),
+            _ok([{"id": record_id}]),
+        ]
+        candidates = self._uploader(client)._find_candidate_record_ids(client, "o", "r")
+        assert len(candidates) == 1
 
-    def test_find_latest_record_id_non_200(self) -> None:
+    def test_find_candidates_empty(self) -> None:
+        client = MagicMock()
+        client.get.side_effect = self._no_candidates()
+        candidates = self._uploader(client)._find_candidate_record_ids(client, "o", "r")
+        assert candidates == []
+
+    def test_find_candidates_non_200(self) -> None:
         client = MagicMock()
         resp = MagicMock()
         resp.status_code = 500
         client.get.return_value = resp
-        assert self._uploader(client)._find_latest_record_id(client, "o", "r") is None
+        candidates = self._uploader(client)._find_candidate_record_ids(client, "o", "r")
+        assert candidates == []
+
+    def test_find_records_by_concept_doi(self) -> None:
+        client = MagicMock()
+        candidates = self._uploader(client)._find_records_by_concept_doi(
+            client, "10.5281/zenodo.55"
+        )
+        # ID is extracted directly from the DOI — no HTTP call needed.
+        assert candidates == [(55, "concept-doi")]
+        client.get.assert_not_called()
+
+    def test_find_records_by_concept_doi_invalid(self) -> None:
+        client = MagicMock()
+        candidates = self._uploader(client)._find_records_by_concept_doi(
+            client, "not-a-doi"
+        )
+        assert candidates == []
+
+    def test_upload_release_concept_doi_override(self) -> None:
+        """--concept-doi bypasses the repo search and uses the named concept."""
+        client = MagicMock()
+        draft = {
+            "id": 200,
+            "links": {"bucket": "http://bucket/200"},
+            "files": [],
+        }
+        published = {
+            "doi": "10.5281/zenodo.200",
+            "conceptdoi": "10.5281/zenodo.100",
+            "links": {"html": ""},
+        }
+        # concept-doi derives ID from the DOI string (no search GET).
+        # Only GETs are the draft fetch after newversion.
+        client.get.side_effect = [_ok(draft)]
+        client.post.side_effect = [
+            _ok({"links": {"latest_draft": "http://draft/200"}}),  # newversion
+            _ok(published),  # publish
+        ]
+        client.put.return_value = _ok()
+
+        with patch(
+            "zenodo_release_drift.main.httpx.Client", return_value=_mock_dl_client()
+        ):
+            result = self._uploader(client).upload_release(
+                "o", "repo", "v2.0.0", "2.0.0", concept_doi="10.5281/zenodo.100"
+            )
+
+        assert result["status"] == "published"
+        assert result["concept_doi"] == "10.5281/zenodo.100"
+        # Only one GET (draft fetch) — no repo search, no concept search.
+        assert client.get.call_count == 1
 
     def test_upload_release_new_concept(self) -> None:
         client = MagicMock()
@@ -280,11 +399,14 @@ class TestZenodoUploader:
             "conceptdoi": "10.5281/zenodo.concept",
             "links": {"html": "http://zenodo.org/record/1"},
         }
-        client.get.return_value = _ok({"hits": {"hits": []}})
+        # depositions empty → public records empty → falls back to new_deposition
+        client.get.side_effect = [_ok({"hits": {"hits": []}}), _ok([])]
         client.post.side_effect = [_ok(deposition), _ok(published)]
         client.put.return_value = _ok()
 
-        with patch("zenodo_release_drift.main.httpx.stream", side_effect=_mock_stream):
+        with patch(
+            "zenodo_release_drift.main.httpx.Client", return_value=_mock_dl_client()
+        ):
             result = self._uploader(client).upload_release(
                 "o", "repo", "v1.0.0", "1.0.0"
             )
@@ -308,14 +430,17 @@ class TestZenodoUploader:
         }
 
         client.get.side_effect = [
-            _ok({"hits": {"hits": [{"id": 7}]}}),  # find existing record
+            _ok({"hits": {"hits": [{"id": 7}]}}),  # public-oldest search
+            _ok([]),  # depositions search
             _ok(draft),  # fetch draft after newversion
         ]
         client.post.side_effect = [newversion_resp, _ok(published)]
         client.delete.return_value = _ok()
         client.put.return_value = _ok()
 
-        with patch("zenodo_release_drift.main.httpx.stream", side_effect=_mock_stream):
+        with patch(
+            "zenodo_release_drift.main.httpx.Client", return_value=_mock_dl_client()
+        ):
             result = self._uploader(client).upload_release(
                 "o", "repo", "v1.1.0", "1.1.0"
             )
@@ -326,7 +451,12 @@ class TestZenodoUploader:
 
     def test_upload_release_403_includes_hint(self) -> None:
         client = MagicMock()
-        client.get.return_value = _ok({"hits": {"hits": [{"id": 7}]}})
+        # One candidate via public-oldest; depositions empty.
+        # newversion fails 403 → new_deposition also fails 403 → outer handler.
+        client.get.side_effect = [
+            _ok({"hits": {"hits": [{"id": 7}]}}),
+            _ok([]),
+        ]
         client.post.return_value = _err(403)
 
         result = self._uploader(client).upload_release("o", "repo", "v1.0.0", "1.0.0")
@@ -335,9 +465,52 @@ class TestZenodoUploader:
         assert "hint" in result
         assert "403" in result["hint"]
 
+    def test_upload_release_404_includes_hint(self) -> None:
+        client = MagicMock()
+        client.get.side_effect = [
+            _ok({"hits": {"hits": [{"id": 7}]}}),
+            _ok([]),
+        ]
+        client.post.return_value = _err(404)
+
+        result = self._uploader(client).upload_release("o", "repo", "v1.0.0", "1.0.0")
+
+        assert result["status"] == "error"
+        assert "hint" in result
+        assert "404" in result["hint"]
+
+    def test_upload_release_newversion_failure_falls_back_to_new_deposition(
+        self,
+    ) -> None:
+        client = MagicMock()
+        deposition = {"id": 2, "links": {"bucket": "http://bucket/2"}, "files": []}
+        published = {
+            "doi": "10.5281/zenodo.2",
+            "conceptdoi": None,
+            "links": {"html": ""},
+        }
+        client.get.side_effect = [
+            _ok({"hits": {"hits": [{"id": 7}]}}),
+            _ok([]),
+        ]
+        # First post (newversion) fails, second post (new deposition) succeeds,
+        # third post (publish) succeeds.
+        client.post.side_effect = [_err(404), _ok(deposition), _ok(published)]
+        client.put.return_value = _ok()
+
+        with patch(
+            "zenodo_release_drift.main.httpx.Client", return_value=_mock_dl_client()
+        ):
+            result = self._uploader(client).upload_release(
+                "o", "repo", "v1.0.0", "1.0.0"
+            )
+
+        assert result["status"] == "published"
+        assert "warning" in result
+
     def test_upload_release_other_http_error_no_hint(self) -> None:
         client = MagicMock()
-        client.get.return_value = _ok({"hits": {"hits": []}})
+        client.get.side_effect = [_ok({"hits": {"hits": []}}), _ok([])]
         client.post.return_value = _err(500, "server error")
 
         result = self._uploader(client).upload_release("o", "repo", "v1.0.0", "1.0.0")
@@ -361,9 +534,14 @@ class TestZenodoUploader:
 
 
 class TestFixRepo:
-    def _mock_gh(self, releases: list[str]) -> GitHubCollector:
+    def _mock_gh(
+        self,
+        releases: list[str],
+        dates: dict[str, str] | None = None,
+    ) -> GitHubCollector:
         m = MagicMock(spec=GitHubCollector)
         m.get_releases.return_value = releases
+        m.get_release_dates.return_value = dates or {}
         return m
 
     def _mock_zen(self, versions: list[str]) -> ZenodoCollector:
@@ -391,26 +569,44 @@ class TestFixRepo:
 
     def test_single_version_upload(self) -> None:
         gh = self._mock_gh(["v1.0.0", "v1.1.0"])
+        zen = self._mock_zen([])
         with patch("zenodo_release_drift.main.ZenodoUploader") as MockUp:
             MockUp.return_value.upload_release.return_value = self._published(
                 "1.1.0", "v1.1.0"
             )
             result = fix_repo(
-                "o", "repo", token="tok", version="1.1.0", github_collector=gh
+                "o",
+                "repo",
+                token="tok",
+                version="1.1.0",
+                github_collector=gh,
+                zenodo_collector=zen,
             )
         assert result[0]["status"] == "published"
         MockUp.return_value.upload_release.assert_called_once_with(
-            "o", "repo", tag="v1.1.0", version="1.1.0"
+            "o",
+            "repo",
+            tag="v1.1.0",
+            version="1.1.0",
+            concept_doi=None,
+            publication_date=None,
+            on_progress=None,
         )
 
     def test_single_version_with_v_prefix(self) -> None:
         gh = self._mock_gh(["v2.0.0"])
+        zen = self._mock_zen([])
         with patch("zenodo_release_drift.main.ZenodoUploader") as MockUp:
             MockUp.return_value.upload_release.return_value = self._published(
                 "2.0.0", "v2.0.0"
             )
             result = fix_repo(
-                "o", "repo", token="tok", version="v2.0.0", github_collector=gh
+                "o",
+                "repo",
+                token="tok",
+                version="v2.0.0",
+                github_collector=gh,
+                zenodo_collector=zen,
             )
         assert result[0]["status"] == "published"
 
@@ -421,6 +617,43 @@ class TestFixRepo:
         )
         assert result[0]["status"] == "error"
         assert "No GitHub release" in result[0]["error"]
+
+    def test_single_version_skipped_when_already_archived(self) -> None:
+        # Version is already on Zenodo and --force not given → skip, no upload.
+        gh = self._mock_gh(["v1.1.0"])
+        zen = self._mock_zen(["v1.1.0"])
+        with patch("zenodo_release_drift.main.ZenodoUploader") as MockUp:
+            result = fix_repo(
+                "o",
+                "repo",
+                token="tok",
+                version="1.1.0",
+                github_collector=gh,
+                zenodo_collector=zen,
+            )
+        assert result[0]["status"] == "skipped"
+        assert "already archived" in result[0]["reason"]
+        MockUp.return_value.upload_release.assert_not_called()
+
+    def test_single_version_force_reuploads_existing(self) -> None:
+        # --force uploads even when the version is already archived.
+        gh = self._mock_gh(["v1.1.0"])
+        zen = self._mock_zen(["v1.1.0"])
+        with patch("zenodo_release_drift.main.ZenodoUploader") as MockUp:
+            MockUp.return_value.upload_release.return_value = self._published(
+                "1.1.0", "v1.1.0"
+            )
+            result = fix_repo(
+                "o",
+                "repo",
+                token="tok",
+                version="1.1.0",
+                force=True,
+                github_collector=gh,
+                zenodo_collector=zen,
+            )
+        assert result[0]["status"] == "published"
+        MockUp.return_value.upload_release.assert_called_once()
 
     def test_all_missing_uploaded(self) -> None:
         gh = self._mock_gh(["v1.0.0", "v1.1.0"])
@@ -511,6 +744,46 @@ class TestFixRepo:
             )
         uploaded = [r["version"] for r in result]
         assert "nightly" not in uploaded
+
+    def test_since_latest_uploads_only_newer_than_zenodo(self) -> None:
+        # Zenodo's newest archive is 1.1.0; GitHub has older and newer tags.
+        # --since-latest must upload only versions strictly above 1.1.0,
+        # skipping the older missing 1.0.0 even though it is absent from Zenodo.
+        gh = self._mock_gh(["v1.0.0", "v1.1.0", "v1.2.0", "v1.3.0"])
+        zen = self._mock_zen(["1.1.0"])
+        with patch("zenodo_release_drift.main.ZenodoUploader") as MockUp:
+            MockUp.return_value.upload_release.side_effect = lambda *_, **kw: (
+                self._published(str(kw["version"]), str(kw["tag"]))
+            )
+            result = fix_repo(
+                "o",
+                "repo",
+                token="tok",
+                since_latest=True,
+                github_collector=gh,
+                zenodo_collector=zen,
+            )
+        uploaded = [r["version"] for r in result]
+        assert uploaded == ["1.2.0", "1.3.0"]
+
+    def test_since_latest_with_empty_zenodo_uploads_all_missing(self) -> None:
+        # No archive on Zenodo yet → no floor → every missing version uploads.
+        gh = self._mock_gh(["v1.0.0", "v1.1.0"])
+        zen = self._mock_zen([])
+        with patch("zenodo_release_drift.main.ZenodoUploader") as MockUp:
+            MockUp.return_value.upload_release.side_effect = lambda *_, **kw: (
+                self._published(str(kw["version"]), str(kw["tag"]))
+            )
+            result = fix_repo(
+                "o",
+                "repo",
+                token="tok",
+                since_latest=True,
+                github_collector=gh,
+                zenodo_collector=zen,
+            )
+        uploaded = [r["version"] for r in result]
+        assert uploaded == ["1.0.0", "1.1.0"]
 
     def test_missing_versions_uploaded_in_ascending_semver_order(self) -> None:
         # GitHub returns newest-first; uploads must happen oldest-first so the

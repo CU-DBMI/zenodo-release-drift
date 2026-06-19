@@ -83,16 +83,27 @@ zenodo-release-drift fix [OPTIONS] OWNER/REPO
 Requires a `ZENODO_TOKEN` environment variable — a personal access token
 created at <https://zenodo.org/account/settings/applications/>.
 
-| Option      | Description                                                   |
-| ----------- | ------------------------------------------------------------- |
-| `--version` | Upload only this specific version (default: all missing ones) |
-| `--from`    | Only upload versions at or above this semver (inclusive)      |
-| `--to`      | Only upload versions at or below this semver (inclusive)      |
-| `--sandbox` | Target `sandbox.zenodo.org` instead of production             |
-| `--json`    | Output results as JSON                                        |
+| Option           | Description                                                            |
+| ---------------- | ---------------------------------------------------------------------- |
+| `--version`      | Upload only this specific version (default: all missing ones)          |
+| `--from`         | Only upload versions at or above this semver (inclusive)               |
+| `--to`           | Only upload versions at or below this semver (inclusive)               |
+| `--since-latest` | Only upload versions newer than the latest one already on Zenodo       |
+| `--concept-doi`  | Link uploads under a specific concept DOI (overrides record discovery) |
+| `--force`        | With `--version`, upload even if that version is already archived      |
+| `--sandbox`      | Target `sandbox.zenodo.org` instead of production                      |
+| `--json`         | Output results as JSON                                                 |
+| `--no-progress`  | Disable the download/upload progress bar                               |
+| `--verbose`      | Print diagnostic details (record lookup, `newversion` errors)          |
 
 **How versions are grouped**: if Zenodo already holds records for the repository, each upload is created as a new version under the same concept DOI so all versions remain linked.
 If no existing records are found, a new concept is created.
+You can also pass `--concept-doi` to link uploads under a specific concept explicitly (useful when automatic discovery picks the wrong record).
+Metadata (authors, description, license, keywords) is read from the repository's `CITATION.cff` when present, and each record's publication date is set to the original GitHub release date.
+
+**Note on version ordering**: Zenodo orders versions within a concept by the order they were added (the `newversion` chain), not by semver or publication date.
+Uploading an _older_ release after a newer one already exists will place it ahead of the newer one in the version list.
+To avoid this, use `--since-latest` to upload only releases newer than the latest version already on Zenodo, which always appends forward and never reorders existing records.
 
 **Note on uploaded source content**: the archive uploaded for each version is fetched from GitHub's tag archive endpoint at the moment `fix` runs, and reflects where the tag points at that time.
 For the vast majority of repositories this is identical to the original release — tags are not normally moved after publishing.
@@ -120,8 +131,11 @@ If a tag has been amended since the original release was made, the archive will 
 export ZENODO_TOKEN=your-token-here
 zenodo-release-drift fix owner/repo
 
-# Upload a single specific release
+# Upload a single specific release (skipped if already archived)
 zenodo-release-drift fix owner/repo --version 1.2.3
+
+# Re-upload a release that already exists as an additional new version
+zenodo-release-drift fix owner/repo --version 1.2.3 --force
 
 # Upload all missing releases from 1.0.0 onwards
 zenodo-release-drift fix owner/repo --from 1.0.0
@@ -131,6 +145,12 @@ zenodo-release-drift fix owner/repo --to 1.4.0
 
 # Upload missing releases within a range
 zenodo-release-drift fix owner/repo --from 1.0.0 --to 1.4.0
+
+# Upload only releases newer than what is already on Zenodo (safest for ordering)
+zenodo-release-drift fix owner/repo --since-latest
+
+# Link uploads under a specific concept DOI
+zenodo-release-drift fix owner/repo --concept-doi 10.5281/zenodo.1234567
 
 # Test against the Zenodo sandbox before touching production
 export ZENODO_TOKEN=your-sandbox-token-here
