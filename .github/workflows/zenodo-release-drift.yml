@@ -16,16 +16,14 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install dependencies
-        run: |
-          pip install uv
-          uv pip install -e .
+      - name: Install the latest version of uv
+        uses: astral-sh/setup-uv@v8.2.0
 
       - name: Check repository for drift
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          zenodo-release-drift lint ${{ github.repository }}
+          uv run --frozen zenodo-release-drift lint ${{ github.repository }}
 
       - name: Create issue if drift detected
         if: always()
