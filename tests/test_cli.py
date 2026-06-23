@@ -9,10 +9,38 @@ from unittest.mock import patch
 
 from typer.testing import CliRunner
 
-from zenodo_release_drift.cli import _findings_to_rows, app
+from zenodo_release_drift.cli import _build_progress, _findings_to_rows, app
 from zenodo_release_drift.main import CheckUserResult
 
 runner = CliRunner()
+
+
+class TestBuildProgress:
+    def test_handles_multiple_versions_without_keyerror(self) -> None:
+        # Regression: in a bulk run (e.g. --since-latest) the same callback is
+        # reused across versions. Each version is download→upload; the second
+        # version's download must not reference a removed task id.
+        bar, on_progress = _build_progress(None)
+        with bar:
+            for _ in range(3):  # three versions back to back
+                on_progress("download", 50, 100)
+                on_progress("download", 100, 100)
+                on_progress("upload", 50, 100)
+                on_progress("upload", 100, 100)
+        # Only the final task remains tracked; no exception was raised.
+        assert len(bar.task_ids) == 1
+
+    def test_single_version_label_includes_version(self) -> None:
+        bar, on_progress = _build_progress("1.2.3")
+        with bar:
+            on_progress("download", 1, 10)
+            assert bar.tasks[-1].description == "1.2.3 — downloading"
+
+    def test_bulk_label_omits_placeholder(self) -> None:
+        bar, on_progress = _build_progress(None)
+        with bar:
+            on_progress("download", 1, 10)
+            assert bar.tasks[-1].description == "downloading"
 
 
 class TestFindingsToRows:

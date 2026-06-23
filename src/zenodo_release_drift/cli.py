@@ -214,9 +214,15 @@ def check(
 
 
 def _build_progress(
-    ver_label: str,
+    ver_label: str | None,
 ) -> tuple[Progress, Callable[[str, int, int], None]]:
-    """Return a rich Progress and a matching on_progress callback."""
+    """Return a rich Progress and a matching on_progress callback.
+
+    A single task is shown at a time. Each phase change — download→upload, or
+    upload→download when the next version begins in a bulk run — removes the
+    previous task and starts a fresh one, so the callback stays valid across any
+    number of uploads in one invocation.
+    """
     bar = Progress(
         TextColumn("[bold blue]{task.description}"),
         BarColumn(),
@@ -225,19 +231,18 @@ def _build_progress(
         TimeRemainingColumn(),
         transient=True,
     )
-    task_ids: dict[str, Any] = {}
+    prefix = f"{ver_label} — " if ver_label and ver_label != "?" else ""
+    state: dict[str, Any] = {"phase": None, "task_id": None}
 
     def on_progress(phase: str, done: int, total: int) -> None:
-        label = f"{ver_label} — {'downloading' if phase == 'download' else 'uploading'}"
-        if phase not in task_ids:
-            # When upload starts, mark the download task complete and remove it.
-            if phase == "upload" and "download" in task_ids:
-                dl_id = task_ids["download"]
-                dl_total = bar.tasks[dl_id].total or done
-                bar.update(dl_id, completed=dl_total)
-                bar.remove_task(dl_id)
-            task_ids[phase] = bar.add_task(label, total=total or None)
-        bar.update(task_ids[phase], completed=done, total=total or None)
+        verb = "downloading" if phase == "download" else "uploading"
+        if phase != state["phase"]:
+            # New phase (or next version's download): drop the old task, start fresh.
+            if state["task_id"] is not None:
+                bar.remove_task(state["task_id"])
+            state["phase"] = phase
+            state["task_id"] = bar.add_task(f"{prefix}{verb}", total=total or None)
+        bar.update(state["task_id"], completed=done, total=total or None)
 
     return bar, on_progress
 
@@ -402,7 +407,7 @@ def fix(  # noqa: PLR0913
     progress_bar: Progress | None = None
 
     if show_progress:
-        progress_bar, on_progress = _build_progress(version_filter or "?")
+        progress_bar, on_progress = _build_progress(version_filter)
         progress_bar.start()
 
     try:
