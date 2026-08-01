@@ -247,7 +247,7 @@ def _build_progress(
     return bar, on_progress
 
 
-def _print_fix_header(  # noqa: PLR0913
+def _print_fix_header(  # noqa: PLR0913, PLR0917
     repo: str,
     sandbox: bool,
     version_filter: str | None,
@@ -305,7 +305,7 @@ def _print_fix_results(results: list[dict[str, Any]], verbose: bool = False) -> 
 
 
 @app.command()
-def fix(  # noqa: PLR0913
+def fix(  # noqa: PLR0913, PLR0917
     repo: str = typer.Argument(..., help="Repository in owner/repo format"),
     version_filter: str | None = typer.Option(
         None,
