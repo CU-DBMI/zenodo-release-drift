@@ -523,7 +523,7 @@ class ZenodoUploader:
 
         return candidates
 
-    def _new_deposition(  # noqa: PLR0913
+    def _new_deposition(  # noqa: PLR0913, PLR0917
         self,
         client: httpx.Client,
         owner: str,
@@ -543,7 +543,7 @@ class ZenodoUploader:
         resp.raise_for_status()
         return resp.json()
 
-    def _new_version(  # noqa: PLR0913
+    def _new_version(  # noqa: PLR0913, PLR0917
         self,
         client: httpx.Client,
         record_id: int,
@@ -601,7 +601,7 @@ class ZenodoUploader:
 
         return draft
 
-    def _upload_file(  # noqa: PLR0913
+    def _upload_file(  # noqa: PLR0913, PLR0917
         self,
         client: httpx.Client,
         bucket_url: str,
@@ -662,7 +662,7 @@ class ZenodoUploader:
         resp.raise_for_status()
         return resp.json()
 
-    def _resolve_deposition(  # noqa: PLR0913
+    def _resolve_deposition(  # noqa: PLR0913, PLR0917
         self,
         client: httpx.Client,
         owner: str,
@@ -710,7 +710,7 @@ class ZenodoUploader:
         )
         return deposition, True
 
-    def upload_release(  # noqa: PLR0913
+    def upload_release(  # noqa: PLR0913, PLR0917
         self,
         owner: str,
         repo: str,
@@ -836,7 +836,7 @@ def _filter_since_latest(
     return [v for v in versions if (p := _parse(v)) is not None and p > floor]
 
 
-def fix_repo(  # noqa: PLR0913
+def fix_repo(  # noqa: PLR0913, PLR0917
     owner: str,
     repo: str,
     token: str,
