@@ -6,6 +6,24 @@ When a repository is connected to Zenodo via the GitHub–Zenodo webhook, every 
 In practice the webhook silently fails, gets disabled, or simply falls behind.
 `zenodo-release-drift` surfaces those gaps so you can act on them.
 
+> **Caveat emptor**
+>
+> `zenodo-release-drift` has both read-only and write commands, and they behave
+> very differently:
+>
+> - **`check` and `lint` are read-only.** They only query the public GitHub and
+>   Zenodo APIs, never modify anything, and **do not require a Zenodo token**.
+>   (An optional `GITHUB_TOKEN` only raises GitHub's rate limit — see
+>   [Authentication](#authentication).) Run them freely.
+> - **`fix` writes to Zenodo.** It uploads files and _publishes_ records on your
+>   behalf, minting real, permanent DOIs. Published Zenodo records generally
+>   **cannot be deleted or unpublished**, and new versions are attached to an
+>   existing concept the tool discovers automatically — which may not be one you
+>   created (see [record ownership](#fix)). Test against the sandbox
+>   (`--sandbox`) first and verify the target repository, version range, and
+>   record ownership before running against production. **You run `fix` at your
+>   own risk.**
+
 ## Installation
 
 ```bash
@@ -75,6 +93,11 @@ Same options as `check`.
 ### `fix`
 
 Upload releases that are missing from Zenodo back to the archive.
+
+> **This command modifies live Zenodo records.** It uploads files and publishes
+> records that mint permanent DOIs, which generally cannot be deleted or
+> unpublished. Always dry-run with `--sandbox` first. Unlike `check` and `lint`,
+> `fix` requires a `ZENODO_TOKEN`.
 
 ```
 zenodo-release-drift fix [OPTIONS] OWNER/REPO
@@ -184,8 +207,9 @@ zenodo-release-drift check my-org
 
 ### Zenodo (`ZENODO_TOKEN`)
 
-The `fix` command requires a Zenodo personal access token with the
-**`deposit:write`** scope.
+Only the `fix` command uses a Zenodo token — `check` and `lint` are read-only
+and need no Zenodo credentials at all. `fix` requires a Zenodo personal access
+token with the **`deposit:write`** scope.
 
 1. Log in to <https://zenodo.org> (or <https://sandbox.zenodo.org> for testing).
 1. Go to **Account → Applications → Personal access tokens**.
