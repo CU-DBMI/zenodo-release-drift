@@ -316,6 +316,25 @@
 <p>When a repository is connected to Zenodo via the GitHub–Zenodo webhook, every new release should be automatically archived.
 In practice the webhook silently fails, gets disabled, or simply falls behind.
 <code class="docutils literal notranslate"><span class="pre">zenodo-release-drift</span></code> surfaces those gaps so you can act on them.</p>
+<blockquote>
+<div><p><strong>Caveat emptor</strong></p>
+<p><code class="docutils literal notranslate"><span class="pre">zenodo-release-drift</span></code> has both read-only and write commands, and they behave
+very differently:</p>
+<ul class="simple">
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">check</span></code> and <code class="docutils literal notranslate"><span class="pre">lint</span></code> are read-only.</strong> They only query the public GitHub and
+Zenodo APIs, never modify anything, and <strong>do not require a Zenodo token</strong>.
+(An optional <code class="docutils literal notranslate"><span class="pre">GITHUB_TOKEN</span></code> only raises GitHub’s rate limit — see
+<a class="reference internal" href="#authentication">Authentication</a>.) Run them freely.</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">fix</span></code> writes to Zenodo.</strong> It uploads files and <em>publishes</em> records on your
+behalf, minting real, permanent DOIs. Published Zenodo records generally
+<strong>cannot be deleted or unpublished</strong>, and new versions are attached to an
+existing concept the tool discovers automatically — which may not be one you
+created (see <a class="reference internal" href="#fix">record ownership</a>). Test against the sandbox
+(<code class="docutils literal notranslate"><span class="pre">--sandbox</span></code>) first and verify the target repository, version range, and
+record ownership before running against production. <strong>You run <code class="docutils literal notranslate"><span class="pre">fix</span></code> at your
+own risk.</strong></p></li>
+</ul>
+</div></blockquote>
 <section id="installation">
 <h2>Installation<a class="headerlink" href="#installation" title="Link to this heading">#</a></h2>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>pip<span class="w"> </span>install<span class="w"> </span>zenodo-release-drift
@@ -389,6 +408,12 @@ command name should be unambiguous.</p>
 <section id="fix">
 <h3><code class="docutils literal notranslate"><span class="pre">fix</span></code><a class="headerlink" href="#fix" title="Link to this heading">#</a></h3>
 <p>Upload releases that are missing from Zenodo back to the archive.</p>
+<blockquote>
+<div><p><strong>This command modifies live Zenodo records.</strong> It uploads files and publishes
+records that mint permanent DOIs, which generally cannot be deleted or
+unpublished. Always dry-run with <code class="docutils literal notranslate"><span class="pre">--sandbox</span></code> first. Unlike <code class="docutils literal notranslate"><span class="pre">check</span></code> and <code class="docutils literal notranslate"><span class="pre">lint</span></code>,
+<code class="docutils literal notranslate"><span class="pre">fix</span></code> requires a <code class="docutils literal notranslate"><span class="pre">ZENODO_TOKEN</span></code>.</p>
+</div></blockquote>
 <div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">zenodo</span><span class="o">-</span><span class="n">release</span><span class="o">-</span><span class="n">drift</span> <span class="n">fix</span> <span class="p">[</span><span class="n">OPTIONS</span><span class="p">]</span> <span class="n">OWNER</span><span class="o">/</span><span class="n">REPO</span>
 </pre></div>
 </div>
@@ -531,8 +556,9 @@ zenodo-release-drift<span class="w"> </span>check<span class="w"> </span>my-org
 </section>
 <section id="zenodo-zenodo-token">
 <h3>Zenodo (<code class="docutils literal notranslate"><span class="pre">ZENODO_TOKEN</span></code>)<a class="headerlink" href="#zenodo-zenodo-token" title="Link to this heading">#</a></h3>
-<p>The <code class="docutils literal notranslate"><span class="pre">fix</span></code> command requires a Zenodo personal access token with the
-<strong><code class="docutils literal notranslate"><span class="pre">deposit:write</span></code></strong> scope.</p>
+<p>Only the <code class="docutils literal notranslate"><span class="pre">fix</span></code> command uses a Zenodo token — <code class="docutils literal notranslate"><span class="pre">check</span></code> and <code class="docutils literal notranslate"><span class="pre">lint</span></code> are read-only
+and need no Zenodo credentials at all. <code class="docutils literal notranslate"><span class="pre">fix</span></code> requires a Zenodo personal access
+token with the <strong><code class="docutils literal notranslate"><span class="pre">deposit:write</span></code></strong> scope.</p>
 <ol class="arabic simple">
 <li><p>Log in to <a class="reference external" href="https://zenodo.org">https://zenodo.org</a> (or <a class="reference external" href="https://sandbox.zenodo.org">https://sandbox.zenodo.org</a> for testing).</p></li>
 <li><p>Go to <strong>Account → Applications → Personal access tokens</strong>.</p></li>
