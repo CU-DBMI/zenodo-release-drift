@@ -106,10 +106,10 @@ ini_options.addopts = [
 ]
 
 [tool.coverage]
-run.branch = true
 run.source = [ "src/zenodo_release_drift" ]
-report.show_missing = true
+run.branch = true
 report.skip_covered = true
+report.show_missing = true
 
 [tool.jupytext]
 formats = "ipynb,py:light"
