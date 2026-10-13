@@ -208,8 +208,8 @@ zenodo-release-drift check my-org
 ### Zenodo (`ZENODO_TOKEN`)
 
 Only the `fix` command uses a Zenodo token — `check` and `lint` are read-only
-and need no Zenodo credentials at all. `fix` requires a Zenodo personal access
-token with the **`deposit:write`** scope.
+and need no Zenodo credentials at all.
+`fix` requires a Zenodo personal access token with the **`deposit:write`** scope.
 
 1. Log in to <https://zenodo.org> (or <https://sandbox.zenodo.org> for testing).
 1. Go to **Account → Applications → Personal access tokens**.
