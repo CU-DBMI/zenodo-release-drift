@@ -26,8 +26,8 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install the latest version of uv
-        uses: astral-sh/setup-uv@v10.2.0
+        uses: astral-sh/setup-uv@v10.3.2
       - name: uv build distribution content
         run: uv build
       - name: Publish package distributions to PyPI
-        uses: pypa/gh-action-pypi-publish@v1.14.2
+        uses: pypa/gh-action-pypi-publish@v1.14.3
