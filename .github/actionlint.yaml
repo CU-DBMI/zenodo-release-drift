@@ -1,0 +1,13 @@
+---
+# Validation-only exception: actionlint 1.7.12 (pinned in
+# .pre-commit-config.yaml) does not yet recognize the ubuntu-26.04 (GA
+# 2026-09-17, see https://github.com/actions/runner-images/issues/14747) or
+# macos-26 (replacing the retired macos-14, see
+# https://github.com/actions/runner-images/issues/13518) GitHub-hosted
+# runner labels. Listing them here as "self-hosted" runner labels silences
+# the unknown-label false positive; no self-hosted runners are actually
+# used by this repo.
+self-hosted-runner:
+  labels:
+    - ubuntu-26.04
+    - macos-26
